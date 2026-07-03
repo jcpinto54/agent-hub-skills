@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
@@ -68,6 +72,11 @@ class AgentHubV3Tests(unittest.TestCase):
         root = Path(temp.name)
         (root / ".git").mkdir()
         return root
+
+    def free_local_port(self) -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+            server.bind(("127.0.0.1", 0))
+            return int(server.getsockname()[1])
 
     def make_git_repo(self, name: str = "repo") -> Path:
         temp = tempfile.TemporaryDirectory()
@@ -1086,6 +1095,132 @@ Malformed frontmatter should be reported deterministically.
         self.assert_cli_ok(root, "audit", "hub")
         self.assert_cli_ok(root, "audit", "issue", "cli-issue")
         self.assert_cli_ok(root, "analyze", "change", "cli-change")
+
+    def test_dashboard_serve_exposes_read_only_state_api(self):
+        root = self.make_repo()
+        hub = file_hub.create_hub(root, "Serve Project")
+        file_hub.create_change_packet(hub, "serve-change", "Serve Change")
+        issue = file_hub.create_issue_file(
+            hub,
+            "Serve Card",
+            "serve-card",
+            change="serve-change",
+        )
+        file_hub.link_issue_to_change(hub, "serve-change", issue.id)
+
+        port = self.free_local_port()
+        server = subprocess.Popen(
+            [
+                sys.executable,
+                str(CLI_PATH),
+                "--repo",
+                str(root),
+                "--hub-root",
+                str(hub),
+                "dashboard",
+                "serve",
+                "--change",
+                "serve-change",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--poll-interval",
+                "0.05",
+            ],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        def stop_server() -> None:
+            if server.poll() is None:
+                server.terminate()
+                try:
+                    server.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    server.kill()
+                    server.communicate(timeout=5)
+            else:
+                server.communicate(timeout=5)
+
+        self.addCleanup(stop_server)
+        base_url = f"http://127.0.0.1:{port}"
+
+        for _ in range(100):
+            if server.poll() is not None:
+                stdout, stderr = server.communicate()
+                self.fail(f"dashboard serve exited early\nstdout:\n{stdout}\nstderr:\n{stderr}")
+            try:
+                with urllib.request.urlopen(f"{base_url}/healthz", timeout=0.2) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.read().decode("utf-8"), "ok\n")
+                    break
+            except OSError:
+                time.sleep(0.05)
+        else:
+            self.fail("dashboard serve did not become healthy")
+
+        with urllib.request.urlopen(f"{base_url}/", timeout=2) as response:
+            self.assertEqual(response.status, 200)
+            self.assertIn("text/html", response.headers.get("Content-Type", ""))
+            self.assertIn("Read-only hub dashboard", response.read().decode("utf-8"))
+
+        with urllib.request.urlopen(f"{base_url}/api/state", timeout=2) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+            state = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(state["version"], "3")
+        self.assertEqual(state["change"], "serve-change")
+        self.assertEqual(state["revision"]["source"], "file")
+        self.assertEqual(state["summary"]["issue_count"], 1)
+        first_revision = state["revision"]["id"]
+
+        for method in ["POST", "PUT", "PATCH", "DELETE"]:
+            request = urllib.request.Request(f"{base_url}/api/state", method=method)
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                urllib.request.urlopen(request, timeout=2)
+            self.assertEqual(raised.exception.code, 405)
+
+        events_request = urllib.request.Request(
+            f"{base_url}/api/events",
+            headers={"Accept": "text/event-stream"},
+        )
+        with urllib.request.urlopen(events_request, timeout=3) as events:
+            self.assertEqual(events.status, 200)
+            self.assertEqual(events.headers.get("Cache-Control"), "no-store")
+            self.assertIn("text/event-stream", events.headers.get("Content-Type", ""))
+
+            def read_event_data() -> dict[str, object]:
+                deadline = time.monotonic() + 3
+                lines: list[str] = []
+                while time.monotonic() < deadline:
+                    line = events.readline().decode("utf-8").rstrip("\n")
+                    if not line:
+                        if lines:
+                            payload = "\n".join(
+                                item.removeprefix("data: ")
+                                for item in lines
+                                if item.startswith("data: ")
+                            )
+                            return json.loads(payload)
+                        continue
+                    lines.append(line)
+                self.fail("timed out waiting for SSE event data")
+
+            initial_event = read_event_data()
+            self.assertEqual(initial_event["revision"]["id"], first_revision)
+
+            updated = file_hub.issue_by_id(hub, "serve-card")
+            updated.status = "Completed"
+            updated.write()
+
+            changed_event = read_event_data()
+            self.assertNotEqual(changed_event["revision"]["id"], first_revision)
+            self.assertEqual(changed_event["summary"]["issue_count"], 1)
+
+        stop_server()
 
 
 if __name__ == "__main__":
