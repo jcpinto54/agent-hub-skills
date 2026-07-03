@@ -22,10 +22,14 @@ class AgentHubPreviewSkillTests(unittest.TestCase):
         review_index = text.index("List ready review issues")
         self.assertLess(preview_index, review_index)
 
-    def test_run_loop_does_not_document_missing_sync_merged_prs_command(self):
+    def test_run_loop_syncs_merged_prs_before_dependency_analysis(self):
         text = read_repo_file("skills/run-agent-hub-loop/SKILL.md")
 
-        self.assertNotIn("state sync-merged-prs", text)
+        self.assertIn("state sync-merged-prs", text)
+        self.assertLess(
+            text.index("state sync-merged-prs"),
+            text.index("analyze change <slug>"),
+        )
 
     def test_preview_skill_contract_records_browser_evidence_without_review_decision(self):
         text = read_repo_file("skills/verify-agent-hub-pr-preview/SKILL.md")

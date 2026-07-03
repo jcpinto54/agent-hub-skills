@@ -231,6 +231,74 @@ None.
         self.assertIn("Summary: first", text)
         self.assertIn("Summary: second", text)
 
+    def test_sync_merged_prs_skips_unmerged_and_malformed_prs(self):
+        temp, _, hub = self.make_repo()
+        self.addCleanup(temp.cleanup)
+
+        open_issue = file_hub.create_issue_file(hub, "Open PR", "open-pr")
+        open_issue.status = "In Review"
+        open_issue.pr_url = "https://github.com/example/repo/pull/7"
+        open_issue.write()
+        malformed = file_hub.create_issue_file(hub, "Malformed PR", "malformed-pr")
+        malformed.status = "In Review"
+        malformed.pr_url = "not-a-github-pr-url"
+        malformed.write()
+
+        def provider(pr_url: str) -> dict[str, object]:
+            self.assertEqual(pr_url, "https://github.com/example/repo/pull/7")
+            return {"state": "OPEN", "url": pr_url}
+
+        result = file_hub.sync_merged_prs(hub, provider=provider)
+
+        self.assertEqual(result["completed"], [])
+        self.assertEqual(set(result["skipped"]), {"open-pr", "malformed-pr"})
+        codes = {item["code"] for item in result["diagnostics"]}
+        self.assertIn("sync_pr_not_merged", codes)
+        self.assertIn("sync_malformed_pr_url", codes)
+        self.assertEqual(file_hub.issue_by_id(hub, "open-pr").status, "In Review")
+        self.assertEqual(file_hub.issue_by_id(hub, "malformed-pr").status, "In Review")
+
+    def test_sync_merged_prs_can_be_scoped_to_change_packet(self):
+        temp, _, hub = self.make_repo()
+        self.addCleanup(temp.cleanup)
+        file_hub.create_change_packet(hub, "target-change", "Target Change")
+        file_hub.create_change_packet(hub, "other-change", "Other Change")
+        target = file_hub.create_issue_file(
+            hub,
+            "Target PR",
+            "target-pr",
+            change="target-change",
+        )
+        target.status = "In Review"
+        target.pr_url = "https://github.com/example/repo/pull/8"
+        target.write()
+        other = file_hub.create_issue_file(
+            hub,
+            "Other PR",
+            "other-pr",
+            change="other-change",
+        )
+        other.status = "In Review"
+        other.pr_url = "https://github.com/example/repo/pull/9"
+        other.write()
+        seen: list[str] = []
+
+        def provider(pr_url: str) -> dict[str, object]:
+            seen.append(pr_url)
+            return {
+                "state": "MERGED",
+                "url": pr_url,
+                "merge_commit_sha": "mergecommit",
+                "merged_at": "2026-07-03T12:00:00Z",
+            }
+
+        result = file_hub.sync_merged_prs(hub, provider=provider, change="target-change")
+
+        self.assertEqual(result["completed"], ["target-pr"])
+        self.assertEqual(seen, ["https://github.com/example/repo/pull/8"])
+        self.assertEqual(file_hub.issue_by_id(hub, "target-pr").status, "Completed")
+        self.assertEqual(file_hub.issue_by_id(hub, "other-pr").status, "In Review")
+
     def test_set_issue_spec_preserves_frontmatter_replaces_sections_and_clears_diagnostics(self):
         temp, root, hub = self.make_repo()
         self.addCleanup(temp.cleanup)
