@@ -118,6 +118,7 @@ The v3 command surface owns durable writes:
 agent-hub init
 agent-hub migrate
 agent-hub state refresh
+agent-hub state sync-merged-prs
 agent-hub change create
 agent-hub change link-issue
 agent-hub change archive
@@ -227,6 +228,12 @@ The practical flow:
    evidence or exception, commit SHA, pushed branch, and PR URL are recorded.
 7. Review from durable central hub records, PRs, commits, artifacts, and command
    output. Completion is a review decision, not a manual status edit.
+8. If a PR was merged outside the Agent Hub review path, run
+   `agent-hub state sync-merged-prs --change <change-slug>` before dependency
+   analysis. The command reads `In Review` GitHub PR URLs, uses `gh`
+   authentication first and `GITHUB_TOKEN`/`GH_TOKEN` as a fallback, marks only
+   confirmed merged PRs completed, and reports skipped or inaccessible PRs as
+   diagnostics.
 
 ## Practical Examples
 

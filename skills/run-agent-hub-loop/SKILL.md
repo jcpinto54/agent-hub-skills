@@ -44,6 +44,8 @@ Use the repo-local script when `agent-hub` is not installed:
 ```bash
 python3 skills/manage-agent-hub-issues/scripts/agent_hub.py analyze change <slug>
 python3 skills/manage-agent-hub-issues/scripts/agent_hub.py audit hub
+python3 skills/manage-agent-hub-issues/scripts/agent_hub.py state sync-merged-prs \
+  --change <slug>
 python3 skills/manage-agent-hub-issues/scripts/agent_hub.py state refresh
 python3 skills/list-agent-hub-issues/scripts/agent_hub_list.py \
   --backend file \
@@ -65,14 +67,16 @@ python3 skills/list-agent-hub-issues/scripts/agent_hub_list.py \
 
 Repeat until a stop condition is reached:
 
-1. Run `state refresh` so hub summaries and runtime-derived readiness are
-   current. Report but do not hide diagnostics.
+1. Run `state sync-merged-prs --change <slug>` so merged implementation PRs can
+   complete their issues and unblock dependencies, then run `state refresh` so
+   hub summaries and runtime-derived readiness are current. Report but do not
+   hide diagnostics.
 2. Run `analyze change <slug>`. Stop on error diagnostics.
 3. List ready implementation issues for the packet.
 4. Spawn one implementation subagent per row, capped by remaining budget.
 5. Wait for the implementation wave to finish.
-6. Run `audit hub`, `state refresh`, and `analyze change <slug>`.
-   Stop on blocking errors.
+6. Run `audit hub`, `state sync-merged-prs --change <slug>`, `state refresh`,
+   and `analyze change <slug>`. Stop on blocking errors.
 7. For each PR-backed issue that has entered review, inspect recorded PR,
    deployment, CI, or related-link evidence for a preview URL. When a CI-created
    preview URL is available for a PR, spawn a preview-verification subagent

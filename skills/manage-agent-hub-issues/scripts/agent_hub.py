@@ -55,6 +55,11 @@ def build_parser() -> argparse.ArgumentParser:
     state = commands.add_parser("state", help="State operations.")
     state_sub = state.add_subparsers(dest="state_command", required=True)
     state_sub.add_parser("refresh", help="Refresh hub state.yml.")
+    sync_merged_prs = state_sub.add_parser(
+        "sync-merged-prs",
+        help="Mark In Review issues completed when their PRs are merged.",
+    )
+    sync_merged_prs.add_argument("--change", default="")
 
     change = commands.add_parser("change", help="Change packet operations.")
     change_sub = change.add_subparsers(dest="change_command", required=True)
@@ -178,6 +183,8 @@ def run(args: argparse.Namespace) -> Any:
 
     if args.command == "state" and args.state_command == "refresh":
         return file_hub.refresh_state(hub)
+    if args.command == "state" and args.state_command == "sync-merged-prs":
+        return file_hub.sync_merged_prs(hub, change=args.change)
 
     if args.command == "change":
         if args.change_command == "create":

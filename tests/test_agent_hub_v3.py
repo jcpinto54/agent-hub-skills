@@ -808,6 +808,68 @@ Outside the hub.
         self.assertIn("refresh-state", state_text)
         self.assertIn("state-refresh", state_text)
 
+    def test_sync_merged_pr_marks_in_review_issue_completed(self):
+        root = self.make_repo()
+        hub = file_hub.create_hub(root, "V3 Project")
+        file_hub.create_change_packet(hub, "merge-sync", "Merge sync")
+        merged = file_hub.create_issue_file(
+            hub,
+            "Merged PR",
+            "merged-pr",
+            change="merge-sync",
+        )
+        merged.status = "In Review"
+        merged.owner = "Codex"
+        merged.claim = {"id": "review-claim"}
+        merged.pr_url = "https://github.com/example/repo/pull/42"
+        merged.commit_sha = "headsha123"
+        merged.write()
+        dependent = file_hub.create_issue_file(
+            hub,
+            "Dependent",
+            "dependent",
+            change="merge-sync",
+        )
+        dependent.depends_on = ["merged-pr"]
+        dependent.write()
+        file_hub.write_runtime_claims(
+            hub,
+            {
+                "merged-pr": {
+                    "id": "review-claim",
+                    "purpose": "review",
+                    "owner": "Codex",
+                    "expires_at": "2099-01-01T00:00:00Z",
+                }
+            },
+        )
+        sync_merged_prs = self.require_backend_function("sync_merged_prs")
+
+        def provider(pr_url: str) -> dict[str, object]:
+            self.assertEqual(pr_url, "https://github.com/example/repo/pull/42")
+            return {
+                "state": "MERGED",
+                "url": pr_url,
+                "merge_commit_sha": "mergecommit456",
+                "merged_at": "2026-07-03T12:00:00Z",
+            }
+
+        result = sync_merged_prs(hub, provider=provider)
+
+        self.assertEqual(result["completed"], ["merged-pr"])
+        self.assertEqual(result["skipped"], [])
+        updated = file_hub.issue_by_id(hub, "merged-pr")
+        self.assertEqual(updated.status, "Completed")
+        self.assertEqual(updated.claim, {})
+        self.assertEqual(file_hub.load_runtime_claims(hub), {})
+        self.assertIn("PR URL: https://github.com/example/repo/pull/42", updated.body)
+        self.assertIn("Merge commit: mergecommit456", updated.body)
+        self.assertIn("Merged at: 2026-07-03T12:00:00Z", updated.body)
+        state = file_hub.refresh_state(hub)
+        self.assertEqual(state["issues"]["merged-pr"]["status"], "Completed")
+        by_id = {issue.id: issue for issue in file_hub.load_issues(hub)}
+        self.assertEqual(file_hub.readiness(by_id["dependent"], by_id), ("Ready", ""))
+
     def test_audit_and_analyze_return_stable_diagnostics(self):
         root = self.make_repo()
         hub = file_hub.create_hub(root, "V3 Project")
@@ -959,6 +1021,10 @@ Malformed frontmatter should be reported deterministically.
 
         self.assert_cli_ok(root, "init", "--project-name", "CLI Project")
         self.assert_cli_ok(root, "state", "refresh")
+        sync_result = self.assert_cli_ok(root, "state", "sync-merged-prs")
+        sync_payload = json.loads(sync_result.stdout)
+        self.assertEqual(sync_payload["completed"], [])
+        self.assertEqual(sync_payload["skipped"], [])
         self.assert_cli_ok(root, "change", "create", "--slug", "cli-change", "--title", "CLI Change")
         self.assert_cli_ok(root, "issue", "create", "--id", "cli-dependency", "--title", "CLI Dependency")
         self.assert_cli_ok(

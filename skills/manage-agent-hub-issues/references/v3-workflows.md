@@ -136,6 +136,21 @@ unresolved, preview evidence is missing when a preview exists, or skipped checks
 are not justified. Use deterministic commands to append review findings, set
 status, and release the review claim.
 
+## Merged PR Sync
+
+If an implementation PR is merged outside the Agent Hub review flow while its
+issue remains `In Review`, sync GitHub merge state before dependency analysis:
+
+```bash
+agent-hub state sync-merged-prs --change <change-slug>
+```
+
+The command inspects `In Review` issues with GitHub `PR URL` metadata. It uses
+`gh pr view` first and falls back to `GITHUB_TOKEN` or `GH_TOKEN` for the GitHub
+REST API. Only confirmed merged PRs move to `Completed`; open, closed-unmerged,
+inaccessible, malformed, or missing PR URLs are left unchanged and reported as
+diagnostics.
+
 ## Audit And Analyze
 
 Use audit for workspace and issue health:

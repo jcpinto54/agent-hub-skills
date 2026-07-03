@@ -12,10 +12,13 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+from urllib.parse import urlparse
 
 from agent_hub_common import PRIORITY_ORDER, STATUS_ORDER, find_repo_root, is_unassigned
 
@@ -1401,6 +1404,200 @@ def refresh_state(hub_path: Path) -> dict[str, Any]:
     }
     write_yamlish(hub_path / STATE_NAME, state)
     return state
+
+
+def parse_github_pr_url(value: str) -> tuple[str, str, str] | None:
+    parsed = urlparse(value)
+    parts = [part for part in parsed.path.split("/") if part]
+    if (
+        parsed.scheme in {"http", "https"}
+        and parsed.netloc.lower() == "github.com"
+        and len(parts) == 4
+        and parts[2] == "pull"
+        and parts[3].isdigit()
+    ):
+        return parts[0], parts[1], parts[3]
+    return None
+
+
+def github_pr_state_from_token(pr_url: str, token: str) -> dict[str, Any]:
+    parsed = parse_github_pr_url(pr_url)
+    if not parsed:
+        raise RuntimeError("Unsupported GitHub PR URL.")
+    owner, repo, number = parsed
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{owner}/{repo}/pulls/{number}",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"GitHub API failed: HTTP {exc.code}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"GitHub API failed: {exc}") from exc
+    return {
+        "state": "MERGED" if payload.get("merged") else str(payload.get("state") or "").upper(),
+        "url": payload.get("html_url") or pr_url,
+        "merge_commit_sha": payload.get("merge_commit_sha"),
+        "merged_at": payload.get("merged_at"),
+    }
+
+
+def github_pr_state_from_gh(pr_url: str) -> dict[str, Any]:
+    command = [
+        "gh",
+        "pr",
+        "view",
+        pr_url,
+        "--json",
+        "state,mergedAt,mergeCommit,url",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Unable to inspect PR with gh: {exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip() or f"exit {result.returncode}"
+        raise RuntimeError(f"Unable to inspect PR with gh: {detail}")
+    payload = json.loads(result.stdout or "{}")
+    merge_commit = payload.get("mergeCommit")
+    return {
+        "state": payload.get("state"),
+        "url": payload.get("url") or pr_url,
+        "merge_commit_sha": (
+            merge_commit.get("oid")
+            if isinstance(merge_commit, dict)
+            else payload.get("mergeCommit")
+        ),
+        "merged_at": payload.get("mergedAt"),
+    }
+
+
+def github_pr_state(pr_url: str) -> dict[str, Any]:
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    try:
+        return github_pr_state_from_gh(pr_url)
+    except RuntimeError:
+        if token:
+            return github_pr_state_from_token(pr_url, token)
+        raise
+
+
+def is_github_pr_url(value: str) -> bool:
+    return parse_github_pr_url(value) is not None
+
+
+def sync_merged_prs(
+    hub_path: Path,
+    provider: Callable[[str], dict[str, Any]] | None = None,
+    change: str = "",
+) -> dict[str, Any]:
+    provider = provider or github_pr_state
+    change = str(change or "")
+    completed: list[str] = []
+    skipped: list[str] = []
+    diagnostics: list[dict[str, str]] = []
+    claims = load_runtime_claims(hub_path)
+    claims_changed = False
+
+    for issue in load_issues(hub_path):
+        if change and issue.change != change:
+            continue
+        if issue.status != "In Review":
+            continue
+        if not issue.pr_url:
+            skipped.append(issue.id)
+            diagnostics.append(
+                diagnostic(
+                    "sync_missing_pr_url",
+                    "warning",
+                    relative_hub_target(hub_path, issue.path),
+                    "In Review issue has no PR URL to inspect.",
+                    "Record a PR URL before running merged PR sync.",
+                )
+            )
+            continue
+        if not is_github_pr_url(issue.pr_url):
+            skipped.append(issue.id)
+            diagnostics.append(
+                diagnostic(
+                    "sync_malformed_pr_url",
+                    "warning",
+                    relative_hub_target(hub_path, issue.path),
+                    f"PR URL is not a supported GitHub pull request URL: {issue.pr_url}",
+                    "Record a URL like https://github.com/owner/repo/pull/123.",
+                )
+            )
+            continue
+        try:
+            pr_state = provider(issue.pr_url)
+        except Exception as exc:  # noqa: BLE001 - sync should report and continue.
+            skipped.append(issue.id)
+            diagnostics.append(
+                diagnostic(
+                    "sync_pr_lookup_failed",
+                    "warning",
+                    relative_hub_target(hub_path, issue.path),
+                    f"Could not inspect PR {issue.pr_url}: {exc}",
+                    "Check GitHub authentication, network access, and the recorded PR URL.",
+                )
+            )
+            continue
+        state = str(pr_state.get("state") or "").upper()
+        if state != "MERGED":
+            skipped.append(issue.id)
+            diagnostics.append(
+                diagnostic(
+                    "sync_pr_not_merged",
+                    "info",
+                    relative_hub_target(hub_path, issue.path),
+                    f"PR {issue.pr_url} is {state or 'unknown'}, not merged.",
+                    "Leave the issue In Review until the PR is merged or review sends it back.",
+                )
+            )
+            continue
+
+        merge_commit = str(pr_state.get("merge_commit_sha") or "")
+        merged_at = str(pr_state.get("merged_at") or "")
+        issue.status = "Completed"
+        issue.claim = {}
+        issue.append_activity(
+            "Status change: In Review -> Completed",
+            [
+                f"Date: {isoformat(now_utc())}",
+                "Agent: agent-hub state sync-merged-prs",
+                f"PR URL: {issue.pr_url}",
+                f"Merge commit: {merge_commit or 'unknown'}",
+                f"Merged at: {merged_at or 'unknown'}",
+                "Reason: GitHub PR is merged.",
+            ],
+        )
+        if issue.id in claims:
+            del claims[issue.id]
+            claims_changed = True
+        completed.append(issue.id)
+
+    if claims_changed:
+        write_runtime_claims(hub_path, claims)
+    return {
+        "ok": True,
+        "change": change,
+        "completed": completed,
+        "skipped": skipped,
+        "diagnostics": diagnostics,
+    }
 
 
 def relative_hub_target(hub_path: Path, path: Path) -> str:

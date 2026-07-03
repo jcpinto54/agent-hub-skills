@@ -15,9 +15,9 @@ blocks: []
 claim: {}
 base_branch: "codex/agent-hub-v3-repo-native"
 branch: "codex/agent-hub-sync-merged-prs"
-worktree_path: "/Users/jcpinto/git/agent-hub-skills-agent-hub-sync-merged-prs"
+worktree_path: "/Users/jcpinto/git/notion-agent-hub-skills-agent-hub-sync-merged-prs"
 commit_sha: "3e8501d35b4b562b728b2a04d02703b57e04dc51"
-pr_url: "https://github.com/jcpinto54/agent-hub-skills/pull/4"
+pr_url: "https://github.com/jcpinto54/notion-agent-hub-skills/pull/4"
 related_links: ""
 external_url: ""
 ---
@@ -139,7 +139,7 @@ Date: 2026-07-03T16:18:55.843290Z
 Agent: Codex
 Claim ID: codex-sync-merged-prs-20260703
 Branch: codex/agent-hub-sync-merged-prs
-Worktree Path: /Users/jcpinto/git/agent-hub-skills-agent-hub-sync-merged-prs
+Worktree Path: /Users/jcpinto/git/notion-agent-hub-skills-agent-hub-sync-merged-prs
 
 ### Progress
 Date: 2026-07-03T16:35:00Z
@@ -149,7 +149,7 @@ TDD: First test tests.test_agent_hub_v3.AgentHubV3Tests.test_sync_merged_pr_mark
 Touched: skills/manage-agent-hub-issues/lib/file_hub_common.py; skills/manage-agent-hub-issues/scripts/agent_hub.py; tests/test_agent_hub_v3.py; tests/test_file_hub_backend.py; README.md; skills/manage-agent-hub-issues/references/v3-workflows.md; run-agent-hub-loop installed/source skill instructions.
 Verification: python3 -m unittest tests.test_agent_hub_v3 tests.test_file_hub_backend passed; python3 -m unittest discover -s tests passed; python3 skills/manage-agent-hub-issues/scripts/agent_hub.py state sync-merged-prs --change agent-hub-sync-merged-prs returned ok with no completions.
 Risks: Live GitHub API behavior depends on gh, GITHUB_TOKEN, or GH_TOKEN credentials; covered through provider injection and safe diagnostics, not live network fixtures.
-Next step: PR https://github.com/jcpinto54/agent-hub-skills/pull/4 is open for review.
+Next step: PR https://github.com/jcpinto54/notion-agent-hub-skills/pull/4 is open for review.
 
 ### Released claim (submitted)
 Date: 2026-07-03T16:31:09.383788Z
