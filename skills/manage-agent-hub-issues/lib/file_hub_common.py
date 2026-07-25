@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import fcntl
 import hashlib
 import json
 import os
@@ -12,12 +13,15 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from urllib.parse import urlparse
 
 from agent_hub_common import PRIORITY_ORDER, STATUS_ORDER, find_repo_root, is_unassigned
@@ -39,8 +43,10 @@ DEFAULT_AGENT_HUB_HOME = ".agents-hub"
 CENTRAL_PROJECTS_DIR = "projects"
 CENTRAL_HUB_DIR = "hub"
 PROJECT_METADATA_NAME = "project.json"
+MUTATION_LOCK_NAME = ".mutation.lock"
 ISSUE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 CHANGE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_MUTATION_LOCK_STATE = threading.local()
 
 PROJECT_TEMPLATES = {
     "principles.md": """# Principles
@@ -469,6 +475,51 @@ def atomic_write(path: Path, text: str) -> None:
     Path(temp_name).replace(path)
 
 
+def content_revision(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+@contextmanager
+def hub_mutation_lock(hub_path: Path) -> Iterator[None]:
+    """Serialize issue/claim mutations across threads and linked worktrees."""
+    lock_path = hub_path.expanduser().resolve() / RUNTIME_DIR / MUTATION_LOCK_NAME
+    lock_key = str(lock_path)
+    held = getattr(_MUTATION_LOCK_STATE, "held", None)
+    if held is None:
+        held = {}
+        _MUTATION_LOCK_STATE.held = held
+    existing = held.get(lock_key)
+    if existing:
+        existing["depth"] += 1
+        try:
+            yield
+        finally:
+            existing["depth"] -= 1
+        return
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = lock_path.open("a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        held[lock_key] = {"depth": 1, "handle": handle}
+        try:
+            yield
+        finally:
+            held.pop(lock_key, None)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
+def locked_hub_mutation(function: Callable[..., Any]) -> Callable[..., Any]:
+    @wraps(function)
+    def wrapped(hub_path: Path, *args: Any, **kwargs: Any) -> Any:
+        with hub_mutation_lock(hub_path):
+            return function(hub_path, *args, **kwargs)
+
+    return wrapped
+
+
 def normalize_list(value: Any) -> list[str]:
     if value is None or value == "":
         return []
@@ -547,10 +598,12 @@ class FileHubIssue:
     external_url: str = ""
     updated_at: datetime | None = None
     extra_frontmatter: dict[str, Any] = field(default_factory=dict, repr=False)
+    source_revision: str = field(default="", repr=False, compare=False)
 
     @classmethod
     def from_path(cls, path: Path) -> "FileHubIssue":
-        data, body = parse_frontmatter(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+        data, body = parse_frontmatter(text)
         stat = path.stat()
         issue_id = str(data.get("id") or path.stem)
         known_keys = {
@@ -604,6 +657,7 @@ class FileHubIssue:
             extra_frontmatter={
                 key: value for key, value in data.items() if key not in known_keys
             },
+            source_revision=content_revision(text),
         )
 
     @property
@@ -644,16 +698,26 @@ class FileHubIssue:
         }
 
     def write(self) -> None:
-        frontmatter = self.to_frontmatter()
-        if self.path.exists():
-            existing, _ = parse_frontmatter(self.path.read_text(encoding="utf-8"))
-            for key, value in existing.items():
+        hub_path = self.path.parent.parent
+        with hub_mutation_lock(hub_path):
+            frontmatter = self.to_frontmatter()
+            if self.path.exists():
+                current_text = self.path.read_text(encoding="utf-8")
+                current_revision = content_revision(current_text)
+                if self.source_revision and current_revision != self.source_revision:
+                    raise RuntimeError(
+                        f"Concurrent issue mutation detected for {self.id!r}; reload and retry."
+                    )
+                existing, _ = parse_frontmatter(current_text)
+                for key, value in existing.items():
+                    if key not in frontmatter:
+                        frontmatter[key] = value
+            for key, value in self.extra_frontmatter.items():
                 if key not in frontmatter:
                     frontmatter[key] = value
-        for key, value in self.extra_frontmatter.items():
-            if key not in frontmatter:
-                frontmatter[key] = value
-        atomic_write(self.path, dump_frontmatter(frontmatter) + self.body.lstrip("\n"))
+            rendered = dump_frontmatter(frontmatter) + self.body.lstrip("\n")
+            atomic_write(self.path, rendered)
+            self.source_revision = content_revision(rendered)
 
     def append_activity(self, heading: str, lines: list[str]) -> None:
         body = self.body.rstrip() + "\n\n"
@@ -766,6 +830,7 @@ def load_runtime_claims(hub_path: Path) -> dict[str, Any]:
     return claims
 
 
+@locked_hub_mutation
 def write_runtime_claims(hub_path: Path, claims: dict[str, Any]) -> None:
     path = runtime_claims_path(hub_path)
     atomic_write(path, json.dumps(claims, indent=2, sort_keys=True) + "\n")
@@ -962,6 +1027,7 @@ Expected result:
     return issue
 
 
+@locked_hub_mutation
 def claim_issue(
     hub_path: Path,
     issue: FileHubIssue,
@@ -974,6 +1040,7 @@ def claim_issue(
     worktree_path: str = "",
     allow_missing_artifacts: bool = False,
 ) -> dict[str, Any]:
+    issue = issue_by_id(hub_path, issue.id)
     issues = load_issues(hub_path)
     by_id = {item.id: item for item in issues}
     runtime_claim = current_runtime_claim(hub_path, issue.id)
@@ -1075,9 +1142,11 @@ def check_issue(hub_path: Path, issue: FileHubIssue, claim_id: str = "") -> dict
     }
 
 
+@locked_hub_mutation
 def renew_issue(
     hub_path: Path, issue: FileHubIssue, claim_id: str, ttl_minutes: int
 ) -> dict[str, Any]:
+    issue = issue_by_id(hub_path, issue.id)
     check_issue(hub_path, issue, claim_id)
     expires_at = now_utc() + timedelta(minutes=ttl_minutes)
     issue.claim["expires_at"] = isoformat(expires_at)
@@ -1096,6 +1165,7 @@ def renew_issue(
     }
 
 
+@locked_hub_mutation
 def release_issue(
     hub_path: Path,
     issue: FileHubIssue,
@@ -1106,6 +1176,7 @@ def release_issue(
     commit_sha: str = "",
     pr_url: str = "",
 ) -> dict[str, Any]:
+    issue = issue_by_id(hub_path, issue.id)
     check_issue(hub_path, issue, claim_id)
     if mode in {"abandon", "handoff", "blocked", "submitted"} and issue.status != "In Progress":
         raise RuntimeError(
@@ -1509,8 +1580,6 @@ def sync_merged_prs(
     completed: list[str] = []
     skipped: list[str] = []
     diagnostics: list[dict[str, str]] = []
-    claims = load_runtime_claims(hub_path)
-    claims_changed = False
 
     for issue in load_issues(hub_path):
         if change and issue.change != change:
@@ -1571,26 +1640,48 @@ def sync_merged_prs(
 
         merge_commit = str(pr_state.get("merge_commit_sha") or "")
         merged_at = str(pr_state.get("merged_at") or "")
-        issue.status = "Completed"
-        issue.claim = {}
-        issue.append_activity(
-            "Status change: In Review -> Completed",
-            [
-                f"Date: {isoformat(now_utc())}",
-                "Agent: agent-hub state sync-merged-prs",
-                f"PR URL: {issue.pr_url}",
-                f"Merge commit: {merge_commit or 'unknown'}",
-                f"Merged at: {merged_at or 'unknown'}",
-                "Reason: GitHub PR is merged.",
-            ],
-        )
-        if issue.id in claims:
-            del claims[issue.id]
-            claims_changed = True
-        completed.append(issue.id)
+        with hub_mutation_lock(hub_path):
+            current = issue_by_id(hub_path, issue.id)
+            if (
+                current.source_revision != issue.source_revision
+                or current.status != "In Review"
+                or current.pr_url != issue.pr_url
+            ):
+                skipped.append(issue.id)
+                diagnostics.append(
+                    diagnostic(
+                        "sync_issue_changed",
+                        "warning",
+                        relative_hub_target(hub_path, current.path),
+                        (
+                            f"Issue {issue.id} changed while inspecting PR "
+                            f"{issue.pr_url}; merge completion was not applied."
+                        ),
+                        "Review the current issue state and rerun merged PR sync.",
+                    )
+                )
+                continue
 
-    if claims_changed:
-        write_runtime_claims(hub_path, claims)
+            claims = load_runtime_claims(hub_path)
+            claims_changed = current.id in claims
+            claims.pop(current.id, None)
+            current.status = "Completed"
+            current.claim = {}
+            current.append_activity(
+                "Status change: In Review -> Completed",
+                [
+                    f"Date: {isoformat(now_utc())}",
+                    "Agent: agent-hub state sync-merged-prs",
+                    f"PR URL: {current.pr_url}",
+                    f"Merge commit: {merge_commit or 'unknown'}",
+                    f"Merged at: {merged_at or 'unknown'}",
+                    "Reason: GitHub PR is merged.",
+                ],
+            )
+            if claims_changed:
+                write_runtime_claims(hub_path, claims)
+            completed.append(current.id)
+
     return {
         "ok": True,
         "change": change,
