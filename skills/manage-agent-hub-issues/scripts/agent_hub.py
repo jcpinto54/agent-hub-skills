@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic repo-native Agent Hub v3 CLI."""
+"""Deterministic central Agent Hub v3 CLI."""
 
 from __future__ import annotations
 
@@ -31,7 +31,10 @@ def repo_root_from_arg(path: Path) -> Path:
 
 
 def hub_from_args(args: argparse.Namespace) -> Path:
-    return repo_root_from_arg(args.repo) / file_hub.HUB_DIR_NAME
+    return file_hub.resolve_hub_path(
+        start=repo_root_from_arg(args.repo),
+        hub_root=args.hub_root,
+    )
 
 
 def print_json(payload: Any) -> None:
@@ -41,14 +44,17 @@ def print_json(payload: Any) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="Repository root.")
+    parser.add_argument("--hub-root", type=Path, help="Explicit Agent Hub directory override.")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    init = commands.add_parser("init", help="Initialize .hub layout.")
+    init = commands.add_parser("init", help="Initialize central hub layout.")
     init.add_argument("--project-name")
+
+    commands.add_parser("migrate", help="Import a legacy repo .hub into the central store.")
 
     state = commands.add_parser("state", help="State operations.")
     state_sub = state.add_subparsers(dest="state_command", required=True)
-    state_sub.add_parser("refresh", help="Refresh .hub/state.yml.")
+    state_sub.add_parser("refresh", help="Refresh hub state.yml.")
 
     change = commands.add_parser("change", help="Change packet operations.")
     change_sub = change.add_subparsers(dest="change_command", required=True)
@@ -157,8 +163,16 @@ def build_parser() -> argparse.ArgumentParser:
 def run(args: argparse.Namespace) -> Any:
     root = repo_root_from_arg(args.repo)
     if args.command == "init":
-        hub = file_hub.create_hub(root, args.project_name)
+        if args.hub_root:
+            hub = file_hub.create_hub_layout(args.hub_root, args.project_name)
+        else:
+            hub = file_hub.create_central_hub(root, args.project_name)
         return {"ok": True, "hub": str(hub)}
+
+    if args.command == "migrate":
+        if args.hub_root:
+            raise RuntimeError("--hub-root is not supported with migrate.")
+        return file_hub.migrate_legacy_hub(root)
 
     hub = hub_from_args(args)
 
@@ -209,7 +223,7 @@ def run(args: argparse.Namespace) -> Any:
             return file_hub.set_issue_spec(hub, args.issue, args.spec_file)
 
     if args.command == "dashboard" and args.dashboard_command == "export":
-        snapshot = file_hub.dashboard_snapshot(hub, change=args.change)
+        snapshot = file_hub.dashboard_live_snapshot(hub, change=args.change)
         if args.output:
             output_path = args.output.expanduser()
             file_hub.atomic_write(

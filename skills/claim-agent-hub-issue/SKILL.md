@@ -1,17 +1,17 @@
 ---
 name: claim-agent-hub-issue
-description: Claim, check, renew, or release Agent Hub ownership leases for implementation work or review work in repo-native `.hub` issues. Use when a user asks to claim ready work, claim review, renew a claim, release abandoned or submitted work, or clear passed/failed review ownership in an Agent Hub.
+description: Claim, check, renew, or release Agent Hub ownership leases for implementation work or review work in central Agent Hub issues. Use when a user asks to claim ready work, claim review, renew a claim, release abandoned or submitted work, or clear passed/failed review ownership in an Agent Hub.
 ---
 
 # Claim Agent Hub Issue
 
-Use the bundled script for ownership leases. It operates on repo-native `.hub` issues.
+Use the bundled script for ownership leases. It operates on the central Agent Hub selected by the current repo/worktree.
 
-The script writes durable issue frontmatter/activity entries and uses `.hub/runtime/claims.json` as the gitignored active-lock source.
+The script writes durable issue frontmatter/activity entries and uses the central hub's `runtime/claims.json` as the active-lock source.
 
 Important: the script does not create git branches or worktrees. After a successful claim, the agent must create or verify the required worktree before touching repo files.
 
-Before claiming, ensure `.hub/config.yml` exists. Use `--hub-root` only for one-off overrides.
+Before claiming, ensure the repo has been initialized or migrated into the central store. Use `--hub-root` only for one-off legacy or test overrides.
 
 ## Claim Work
 

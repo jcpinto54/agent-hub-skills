@@ -1,11 +1,11 @@
 ---
 name: create-agent-hub-issue
-description: Create repo-native `.hub` Agent Hub issues, follow-ups, decisions, open questions, and handoffs. Use when a user asks to add, file, create, record, split, or sequence durable work items in an Agent Hub.
+description: Create central Agent Hub issues, follow-ups, decisions, open questions, and handoffs. Use when a user asks to add, file, create, record, split, or sequence durable work items in an Agent Hub.
 ---
 
 # Create Agent Hub Issue
 
-For repo work, `.hub/issues/<issue-id>.md` is the canonical durable record. Use deterministic commands for repo-native writes.
+For repo work, the central hub's `issues/<issue-id>.md` is the canonical durable record. Use deterministic commands for writes.
 
 ## Workflow
 
@@ -13,9 +13,9 @@ For repo work, `.hub/issues/<issue-id>.md` is the canonical durable record. Use 
 2. Draft durable content with context, scope, out of scope, observable done criteria, verification strategy, dependencies, and first next step.
 3. Set obvious dependencies through deterministic dependency commands when ordering is clear.
 4. Create the item and fetch/read it back to verify metadata and body.
-5. Do not hand-edit `.hub` frontmatter, dependency links, status, claim state, or layout. If no deterministic command exists for the needed mutation, report the missing backend surface.
+5. Do not hand-edit hub frontmatter, dependency links, status, claim state, or layout. If no deterministic command exists for the needed mutation, report the missing backend surface.
 
-For repo-native creation, use:
+For central hub creation, use:
 
 ```bash
 python3 <repo>/skills/manage-agent-hub-issues/scripts/agent_hub.py issue create \

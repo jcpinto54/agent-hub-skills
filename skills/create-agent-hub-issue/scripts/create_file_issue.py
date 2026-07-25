@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a repo-native .hub issue file."""
+"""Create a central Agent Hub issue file."""
 
 from __future__ import annotations
 

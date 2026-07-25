@@ -21,6 +21,7 @@ viewer, claiming one issue, or operating a packet loop.
 | Turn a rough idea into claimable work | `spec-agent-hub-issue`, then `create-agent-hub-issue` | "Spec this idea into Agent Hub issues." |
 | Split oversized or overlapping work | `dry-mece`, then `spec-agent-hub-issue` | "Decompose this into clean Agent Hub issues." |
 | Create a new issue, decision, follow-up, or handoff | `create-agent-hub-issue` | "Create an Agent Hub issue for..." |
+| Browser-check a PR preview before review | `verify-agent-hub-pr-preview` | "Verify the PR preview for Agent Hub issue `hub-123`." |
 | Review an `In Review` issue | `review-agent-hub-issue` | "Review Agent Hub issue `hub-123`." |
 | Record progress, blockers, evidence, or a handoff | `update-agent-hub-issue` | "Update `hub-123` with this progress..." |
 | Initialize Agent Hub in a repo | `init-agent-hub` | "Initialize Agent Hub in this repository." |
@@ -58,7 +59,7 @@ What it does:
 2. Lists ready implementation issues.
 3. Spawns implementation subagents.
 4. Audits and analyzes again.
-5. Spawns preview-verification subagents for PRs with CI-created preview URLs.
+5. Spawns `$verify-agent-hub-pr-preview` subagents for PRs with CI-created preview URLs, or records no-preview rationales.
 6. Lists ready review issues.
 7. Spawns independent review subagents.
 8. Refreshes hub state and repeats until a stop condition is reached.
@@ -212,7 +213,7 @@ claims, or create cleanup issues.
 
 ### Initialize A Hub
 
-Use `init-agent-hub` for new repo-native `.hub/` setup.
+Use `init-agent-hub` for new central Agent Hub setup.
 
 Example prompts:
 
@@ -220,8 +221,9 @@ Example prompts:
 Initialize Agent Hub in this repo.
 ```
 
-Repo-native `.hub/` is the source of truth for repository work. External notes
-are context only.
+The central hub under `~/.agents-hub/` or `AGENT_HUB_HOME` is the source of
+truth for repository work. Linked worktrees of the same clone share that state.
+Legacy repo-local `.hub/` directories are migration input and context only.
 
 ### Sync The Plugin Skills
 
@@ -242,9 +244,9 @@ repository itself.
 For broad coordination:
 
 ```text
-Use $manage-agent-hub-issues to coordinate this in Agent Hub. Prefer repo-native
-`.hub`, deterministic writes, subagents for substantive work, and TDD for code
-changes.
+Use $manage-agent-hub-issues to coordinate this in Agent Hub. Prefer the
+central hub selected by `--repo`, deterministic writes, subagents for
+substantive work, and TDD for code changes.
 ```
 
 For packet execution:

@@ -6,14 +6,14 @@ specific Agent Hub action.
 ## Init
 
 1. Identify the target repo and project name.
-2. Prefer `agent-hub init --repo <repo> --project-name <name>`.
-3. Verify the v3 layout exists: `.hub/config.yml`, `.hub/state.yml`,
-   `.hub/project/`, `.hub/changes/`, `.hub/issues/`, `.hub/decisions/`,
-   `.hub/reports/`, `.hub/artifacts/`, and `.hub/.gitignore`.
+2. Prefer `agent-hub --repo <repo> init --project-name <name>`.
+3. Verify the reported central hub layout exists: `config.yml`, `state.yml`,
+   `project/`, `changes/`, `issues/`, `decisions/`, `reports/`, `artifacts/`,
+   and `.gitignore`.
 4. Run `agent-hub state refresh` when available.
 5. If the v3 CLI is unavailable, use the current init compatibility script only
    for the layout it supports and report any missing v3 paths as assumptions.
-6. Keep repo work in `.hub/`; external notes are context only.
+6. Keep repo work in the central hub; external notes and legacy `.hub/` files are context only.
 
 ## Create Or Link Work
 
@@ -109,10 +109,11 @@ Prefer release mode semantics that atomically clear the work claim and preserve
 review evidence.
 
 For user-facing web changes, when a CI-created preview URL is available for a
-PR, spawn a preview-verification subagent before independent review. The
-preview-verification agent should check the deployed preview website against the
-issue done criteria, record durable evidence, and send the issue back or report
-a blocker when the preview is inaccessible, stale, or fails a criterion.
+PR, spawn a preview-verification subagent using `$verify-agent-hub-pr-preview`
+before independent review. The preview-verification agent should check the
+deployed preview website against the issue done criteria, record durable
+evidence, and report a blocker when the preview is inaccessible, stale, or fails
+a criterion. If no preview URL is available, record a no-preview rationale.
 
 ## Review
 
@@ -147,8 +148,8 @@ agent-hub audit issue <issue-id>
 Audit should flag missing required files, malformed frontmatter, stale claims,
 dangling dependencies, vague issues, blocked work, missing evidence, review-ready
 work without PR/commit/test data, missing TDD strategy, and malformed runtime
-claims. Reports go to `.hub/reports/latest-audit.json` and
-`.hub/reports/latest-audit.md`.
+claims. Reports go to `reports/latest-audit.json` and
+`reports/latest-audit.md` in the central hub.
 
 Use analyze for change packets:
 
@@ -158,8 +159,8 @@ agent-hub analyze change <change-slug>
 
 Analyze should check proposal/design/tasks alignment, task-to-issue coverage,
 issue-to-change links, independent claimability, checklist completion, evidence
-coverage, and review risks. Reports go to `.hub/reports/latest-analysis.json`
-and `.hub/reports/latest-analysis.md`.
+coverage, and review risks. Reports go to `reports/latest-analysis.json`
+and `reports/latest-analysis.md` in the central hub.
 
 Diagnostics should have stable codes, severities, targets, messages, and
 recommendations so tests and evals can match them.
@@ -180,7 +181,8 @@ Use `iterate-agent-hub-work` for one subagent-first iteration.
 Use `run-agent-hub-loop` when the user asks to keep operating on one change
 packet until blocked, complete, or budget exhausted. The loop skill repeatedly
 analyzes the packet, lists ready implementation work, spawns implementation
-subagents, waits for the wave, spawns preview-verification subagents for
-PR-backed issues when CI-created previews are available, lists ready review work,
-spawns independent review subagents, waits for review, refreshes state, and
-stops on budget or blocking diagnostics.
+subagents, waits for the wave, spawns `$verify-agent-hub-pr-preview` subagents
+for PR-backed issues when CI-created previews are available, records no-preview
+rationales when previews are not available, lists ready review work, spawns
+independent review subagents, waits for review, refreshes state, and stops on
+budget or blocking diagnostics.

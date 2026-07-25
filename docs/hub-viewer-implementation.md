@@ -1,19 +1,19 @@
 # Read-Only Agent Hub Viewer Implementation
 
 The Agent Hub viewer is a dependency-free, static Kanban dashboard for a
-repo-native `.hub/` directory. It is intentionally read-only: the backend exports
+central Agent Hub. It is intentionally read-only: the backend exports
 a JSON snapshot, and the browser renders that snapshot without parsing Markdown,
 calling external services, or writing hub state.
 
 ## Architecture
 
-The durable source of truth is the target repository's `.hub/` directory.
-Issues live in `.hub/issues/*.md`, change packets live under `.hub/changes/`,
-and local runtime claim state lives under `.hub/runtime/`.
+The durable source of truth is the central hub selected by the target
+repository/worktree. Issues live in `issues/*.md`, change packets live under
+`changes/`, and local runtime claim state lives under `runtime/`.
 
 The implementation boundary is:
 
-- `.hub` source files are read by the Agent Hub backend.
+- Central hub source files are read by the Agent Hub backend.
 - `dashboard_snapshot(hub_path, change="")` builds an in-memory dashboard model.
 - `agent-hub dashboard export` serializes that model as JSON to stdout or an
   explicit output file.
@@ -44,12 +44,13 @@ change slugs. Omitting the change filter exports a whole-hub snapshot.
 
 ## Core Concepts
 
-A hub is the repo-owned `.hub/` workspace that stores project state.
+A hub is the central workspace that stores project state for one repository
+clone; linked worktrees share it.
 
 An issue is a Markdown record with frontmatter and structured sections for
 scope, criteria, verification, dependencies, ownership, and activity.
 
-A change packet groups related issues under `.hub/changes/<slug>/` and lets the
+A change packet groups related issues under `changes/<slug>/` and lets the
 dashboard focus on one coherent initiative.
 
 A dashboard snapshot is the read-only JSON view of hub state that the browser
@@ -79,6 +80,8 @@ the work context without opening every Markdown file.
 - `?data=<url>` override for alternate snapshots.
 - Whole-hub snapshots and change-specific snapshots.
 - Local static serving with tools such as Python `http.server`.
+- Live local serving through `agent-hub dashboard serve`, including `/api/state`
+  and revision events.
 
 At a high level, generate a dashboard export for a target repo, write it to the
 viewer directory as `hub-state.json` or serve it elsewhere, then open the static
@@ -86,17 +89,16 @@ viewer in a browser.
 
 ## Explicit Limitations And Non-Goals
 
-- No realtime updates yet.
-- No browser-side `.hub` parsing.
+- No browser-side hub parsing.
 - No writes, mutations, status changes, issue creation, claims, or releases.
 - No external services dependency or external sync.
-- No authentication, hosted service, routing server, or package manager.
+- No authentication, hosted service, external routing server, or package manager.
 - No committed generated dashboard state.
 - No persistent browser settings or user-specific dashboard state.
-- No live server/watch mode in the current implementation.
+- No browser-side polling or direct filesystem watchers; live updates come from
+  the local `dashboard serve` API.
 
 ## Next Likely Step
 
-The right next enhancement is a local `dashboard serve` command that recomputes
-or watches `.hub` and serves `/api/state`. That would keep the current read-only
-browser boundary while removing the manual snapshot export step.
+The right next enhancement is improving live-server ergonomics, such as clearer
+process lifecycle controls and richer revision-event handling in the viewer.

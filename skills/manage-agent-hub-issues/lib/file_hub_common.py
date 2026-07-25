@@ -6,8 +6,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import re
+import shutil
 import socket
+import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -28,6 +31,11 @@ PROJECT_DIR = "project"
 CHANGES_DIR = "changes"
 REPORTS_DIR = "reports"
 STATE_NAME = "state.yml"
+AGENT_HUB_HOME_ENV = "AGENT_HUB_HOME"
+DEFAULT_AGENT_HUB_HOME = ".agents-hub"
+CENTRAL_PROJECTS_DIR = "projects"
+CENTRAL_HUB_DIR = "hub"
+PROJECT_METADATA_NAME = "project.json"
 ISSUE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 CHANGE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -203,11 +211,88 @@ def parse_datetime(value: Any) -> datetime | None:
         return None
 
 
-def repo_hub_path(start: Path | None = None) -> Path | None:
+def agent_hub_home() -> Path:
+    configured = os.environ.get(AGENT_HUB_HOME_ENV)
+    return (
+        Path(configured).expanduser().resolve()
+        if configured
+        else Path.home() / DEFAULT_AGENT_HUB_HOME
+    )
+
+
+def git_common_dir(start: Path | None = None) -> Path:
+    root = find_repo_root(start)
+    if not root:
+        return (start or Path.cwd()).expanduser().resolve()
+    result = subprocess.run(
+        ["git", "rev-parse", "--git-common-dir"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        common = Path(result.stdout.strip())
+        if not common.is_absolute():
+            common = root / common
+        return common.resolve()
+    return (root / ".git").resolve()
+
+
+def central_project_id(start: Path | None = None) -> str:
+    common = git_common_dir(start)
+    return hashlib.sha256(str(common).encode("utf-8")).hexdigest()[:24]
+
+
+def central_project_path(start: Path | None = None) -> Path:
+    return agent_hub_home() / CENTRAL_PROJECTS_DIR / central_project_id(start)
+
+
+def central_hub_path(start: Path | None = None) -> Path:
+    return central_project_path(start) / CENTRAL_HUB_DIR
+
+
+def legacy_repo_hub_path(start: Path | None = None) -> Path | None:
     root = find_repo_root(start)
     if not root:
         return None
     hub = root / HUB_DIR_NAME
+    return hub if (hub / CONFIG_NAME).exists() else None
+
+
+def write_central_project_metadata(start: Path, hub: Path) -> None:
+    root = find_repo_root(start) or start.expanduser().resolve()
+    common = git_common_dir(root)
+    project = hub.parent
+    metadata_path = project / PROJECT_METADATA_NAME
+    worktree = str(root)
+    existing: dict[str, Any] = {}
+    if metadata_path.exists():
+        try:
+            loaded = json.loads(metadata_path.read_text(encoding="utf-8") or "{}")
+            if isinstance(loaded, dict):
+                existing = loaded
+        except json.JSONDecodeError:
+            existing = {}
+    worktrees = sorted({*normalize_list(existing.get("worktrees")), worktree})
+    metadata = {
+        "version": 1,
+        "project_id": project.name,
+        "git_common_dir": str(common),
+        "hub": str(hub),
+        "worktrees": worktrees,
+        "legacy_hub": str(root / HUB_DIR_NAME),
+        "legacy_hub_exists": (root / HUB_DIR_NAME / CONFIG_NAME).exists(),
+    }
+    comparable_existing = {key: existing.get(key) for key in metadata}
+    if comparable_existing == metadata:
+        return
+    metadata["updated_at"] = isoformat(now_utc())
+    atomic_write(metadata_path, json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+
+
+def repo_hub_path(start: Path | None = None) -> Path | None:
+    hub = central_hub_path(start)
     return hub if (hub / CONFIG_NAME).exists() else None
 
 
@@ -216,7 +301,13 @@ def resolve_hub_path(start: Path | None = None, hub_root: Path | None = None) ->
         return hub_root.expanduser().resolve()
     hub = repo_hub_path(start)
     if not hub:
-        raise RuntimeError("No .hub/config.yml found. Run init-agent-hub for a repo-native hub.")
+        legacy = legacy_repo_hub_path(start)
+        if legacy:
+            raise RuntimeError(
+                "No central Agent Hub found. Run `agent-hub migrate` to import legacy .hub state."
+            )
+        raise RuntimeError("No central Agent Hub found. Run `agent-hub init`.")
+    write_central_project_metadata((start or Path.cwd()).expanduser().resolve(), hub)
     return hub
 
 
@@ -705,9 +796,8 @@ def has_waiver(issue: FileHubIssue) -> bool:
     return "waive" in text or "override" in text
 
 
-def create_hub(root: Path, project_name: str | None = None) -> Path:
-    root = root.expanduser().resolve()
-    hub = root / HUB_DIR_NAME
+def create_hub_layout(hub: Path, project_name: str | None = None) -> Path:
+    hub = hub.expanduser().resolve()
     (hub / PROJECT_DIR).mkdir(parents=True, exist_ok=True)
     (hub / CHANGES_DIR).mkdir(parents=True, exist_ok=True)
     (hub / ISSUES_DIR).mkdir(parents=True, exist_ok=True)
@@ -718,7 +808,7 @@ def create_hub(root: Path, project_name: str | None = None) -> Path:
     if not (hub / ".gitignore").exists():
         (hub / ".gitignore").write_text("runtime/\n", encoding="utf-8")
     if not (hub / CONFIG_NAME).exists():
-        name = project_name or root.name
+        name = project_name or hub.parent.name
         config = {
             "version": 3,
             "source_of_truth": "file",
@@ -757,6 +847,46 @@ def create_hub(root: Path, project_name: str | None = None) -> Path:
         if not path.exists():
             atomic_write(path, text.rstrip() + "\n")
     return hub
+
+
+def create_hub(root: Path, project_name: str | None = None) -> Path:
+    root = root.expanduser().resolve()
+    return create_hub_layout(root / HUB_DIR_NAME, project_name or root.name)
+
+
+def create_central_hub(root: Path, project_name: str | None = None) -> Path:
+    root = root.expanduser().resolve()
+    repo_root = find_repo_root(root) or root
+    if legacy_repo_hub_path(repo_root) and not (central_hub_path(repo_root) / CONFIG_NAME).exists():
+        raise RuntimeError(
+            "Legacy .hub/config.yml exists. Run `agent-hub migrate` to import it before init."
+        )
+    hub = create_hub_layout(central_hub_path(repo_root), project_name or repo_root.name)
+    write_central_project_metadata(repo_root, hub)
+    return hub
+
+
+def migrate_legacy_hub(root: Path) -> dict[str, Any]:
+    root = root.expanduser().resolve()
+    repo_root = find_repo_root(root) or root
+    legacy = legacy_repo_hub_path(repo_root)
+    if not legacy:
+        raise RuntimeError(f"No legacy .hub/config.yml found for migration: {repo_root}")
+    hub = central_hub_path(repo_root)
+    if hub.exists():
+        if (hub / CONFIG_NAME).exists():
+            raise RuntimeError(f"Central Agent Hub already exists: {hub}")
+        if any(hub.iterdir()):
+            raise RuntimeError(f"Central Agent Hub path is not empty: {hub}")
+        hub.rmdir()
+    shutil.copytree(legacy, hub)
+    write_central_project_metadata(repo_root, hub)
+    return {
+        "ok": True,
+        "hub": str(hub),
+        "legacy_hub": str(legacy),
+        "project_id": hub.parent.name,
+    }
 
 
 def create_issue_file(
@@ -1799,8 +1929,11 @@ def dashboard_source_paths(hub_path: Path) -> list[Path]:
 
 
 def dashboard_source_fingerprint(hub_path: Path) -> str:
+    hub_path = hub_path.expanduser().resolve()
     digest = hashlib.sha256()
     digest.update(b"agent-hub-dashboard-source-v1\0")
+    digest.update(str(hub_path).encode("utf-8"))
+    digest.update(b"\0")
     for path in dashboard_source_paths(hub_path):
         try:
             content = path.read_bytes()
