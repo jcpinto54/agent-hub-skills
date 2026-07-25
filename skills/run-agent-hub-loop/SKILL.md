@@ -1,6 +1,6 @@
 ---
 name: run-agent-hub-loop
-description: Run a budget-capped Agent Hub packet operator loop. Use when a user asks to run, operate, continue, or iterate agents on a repo-native Agent Hub change packet until blocked, complete, or budget exhausted, with implementation and independent review handled by subagents.
+description: Run a budget-capped Agent Hub packet operator loop. Use when a user asks to run, operate, continue, or iterate agents on a central Agent Hub change packet until blocked, complete, or budget exhausted, with implementation and independent review handled by subagents.
 ---
 
 # Run Agent Hub Loop
@@ -22,13 +22,13 @@ active non-archived change packet exists. Otherwise ask for the slug.
 ## Responsibilities
 
 - Parent agent is the orchestrator only.
-- Deterministic commands own `.hub` reads and writes.
+- Deterministic commands own central hub reads and writes.
 - Implementation agents claim, code, test, commit, push, open PRs, record
   evidence, and submit to review.
 - Preview-verification agents check CI-created PR preview deployments before
   normal review when previews exist.
-- When a CI-created preview URL is available for a PR, spawn a preview-verification subagent before independent review.
-- Preview-verification agents check the deployed preview website against the issue done criteria.
+- When a CI-created preview URL is available for a PR, spawn a preview-verification subagent using `$verify-agent-hub-pr-preview` before independent review.
+- Preview-verification agents check the deployed preview website against the issue done criteria and record durable evidence.
 - Normal review should treat preview evidence as durable input.
 - Review agents claim review and make completion/send-back decisions.
 - The parent never claims, implements, reviews its own work, or bypasses
@@ -44,8 +44,6 @@ Use the repo-local script when `agent-hub` is not installed:
 ```bash
 python3 skills/manage-agent-hub-issues/scripts/agent_hub.py analyze change <slug>
 python3 skills/manage-agent-hub-issues/scripts/agent_hub.py audit hub
-python3 skills/manage-agent-hub-issues/scripts/agent_hub.py state sync-merged-prs \
-  --change <slug>
 python3 skills/manage-agent-hub-issues/scripts/agent_hub.py state refresh
 python3 skills/list-agent-hub-issues/scripts/agent_hub_list.py \
   --backend file \
@@ -67,20 +65,20 @@ python3 skills/list-agent-hub-issues/scripts/agent_hub_list.py \
 
 Repeat until a stop condition is reached:
 
-1. Run `state sync-merged-prs --change <slug>` so merged implementation PRs can
-   complete their issues and unblock dependencies. Report but do not hide
-   diagnostics.
+1. Run `state refresh` so hub summaries and runtime-derived readiness are
+   current. Report but do not hide diagnostics.
 2. Run `analyze change <slug>`. Stop on error diagnostics.
 3. List ready implementation issues for the packet.
 4. Spawn one implementation subagent per row, capped by remaining budget.
 5. Wait for the implementation wave to finish.
-6. Run `audit hub`, `state sync-merged-prs --change <slug>`, and
-   `analyze change <slug>`. Stop on blocking errors.
+6. Run `audit hub`, `state refresh`, and `analyze change <slug>`. Stop on
+   blocking errors.
 7. For each PR-backed issue that has entered review, inspect recorded PR,
    deployment, CI, or related-link evidence for a preview URL. When a CI-created
    preview URL is available for a PR, spawn a preview-verification subagent
-   before independent review. If no preview URL exists, record that no preview
-   was available and continue.
+   using `$verify-agent-hub-pr-preview` before independent review. If no preview
+   URL exists, use `$verify-agent-hub-pr-preview` to record a no-preview
+   rationale and continue.
 8. Wait for the preview-verification wave to finish.
 9. List ready review issues for the packet.
 10. Spawn one independent review subagent per row.
@@ -129,7 +127,7 @@ Rules:
 Use this prompt shape for each preview-verification subagent:
 
 ```text
-Use the Agent Hub skills to verify this PR preview website.
+Use $verify-agent-hub-pr-preview to verify this PR preview website.
 
 Change packet: <slug>
 Issue:
@@ -142,18 +140,10 @@ Issue:
 - Preview URL: <preview-url>
 
 Rules:
-- Do not implement code or review your own implementation.
-- Read the issue, change packet, PR summary, done criteria, and recorded test
-  evidence before opening the preview.
-- Preview-verification agents check the deployed preview website against the
-  issue done criteria.
-- Exercise the changed user-facing workflow in the preview, including responsive
-  states, console errors, and obvious network failures where relevant.
-- Record durable evidence with $update-agent-hub-issue: preview URL, commands or
-  browser steps, screenshots when useful, observations, failures, and skipped
-  checks with rationale.
-- Send the issue back or report a blocker if the preview cannot be accessed,
-  does not reflect the PR, or fails a done criterion.
+- Follow `$verify-agent-hub-pr-preview` exactly.
+- Do not implement code, mark review pass/fail, complete the issue, or send the
+  issue back.
+- Record preview evidence or a no-preview rationale before normal review runs.
 ```
 
 ## Review Handoff

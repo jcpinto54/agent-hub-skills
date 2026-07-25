@@ -10,6 +10,7 @@ from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -452,7 +453,7 @@ None.
         )
         self.assertEqual(reports_after, reports_before)
 
-    def test_list_and_claim_scripts_auto_detect_file_backend(self):
+    def test_list_and_claim_scripts_use_explicit_hub_root_file_backend(self):
         temp, root, hub = self.make_repo()
         self.addCleanup(temp.cleanup)
 
@@ -461,11 +462,15 @@ None.
         try:
             os.chdir(root)
             with redirect_stdout(StringIO()):
-                list_rc = list_mod.main(["--format", "json", "--readiness", "Ready"])
+                list_rc = list_mod.main(
+                    ["--hub-root", str(hub), "--format", "json", "--readiness", "Ready"]
+                )
             self.assertEqual(list_rc, 0)
             with redirect_stdout(StringIO()):
                 claim_rc = claim_mod.main(
                     [
+                        "--hub-root",
+                        str(hub),
                         "claim",
                         "--page-id",
                         "ready-script",
@@ -481,21 +486,25 @@ None.
         finally:
             os.chdir(cwd)
 
-    def test_init_script_creates_repo_native_layout(self):
+    def test_init_script_creates_central_layout(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         root = Path(temp.name)
         (root / ".git").mkdir()
+        agent_hub_home = root / "agent-hub-home"
 
-        with redirect_stdout(StringIO()):
-            rc = init_mod.main(["--repo", str(root), "--project-name", "Script Project"])
+        with patch.dict(os.environ, {"AGENT_HUB_HOME": str(agent_hub_home)}):
+            with redirect_stdout(StringIO()):
+                rc = init_mod.main(["--repo", str(root), "--project-name", "Script Project"])
+            hub = file_hub.central_hub_path(root)
 
         self.assertEqual(rc, 0)
-        self.assertTrue((root / ".hub/config.yml").exists())
-        self.assertTrue((root / ".hub/issues").is_dir())
-        self.assertTrue((root / ".hub/decisions").is_dir())
-        self.assertTrue((root / ".hub/artifacts").is_dir())
-        self.assertEqual((root / ".hub/.gitignore").read_text(encoding="utf-8"), "runtime/\n")
+        self.assertFalse((root / ".hub/config.yml").exists())
+        self.assertTrue((hub / "config.yml").exists())
+        self.assertTrue((hub / "issues").is_dir())
+        self.assertTrue((hub / "decisions").is_dir())
+        self.assertTrue((hub / "artifacts").is_dir())
+        self.assertEqual((hub / ".gitignore").read_text(encoding="utf-8"), "runtime/\n")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
 interface:
   display_name: "Init Agent Hub"
-  short_description: "Create a repo-native agent hub"
-  default_prompt: "Use $init-agent-hub to create a repo-native Agent Hub for this project."
+  short_description: "Create a central agent hub"
+  default_prompt: "Use $init-agent-hub to create a central Agent Hub for this project."

@@ -1,21 +1,24 @@
 # agent-hub-skills
 
-Reusable Codex skills and deterministic scripts for coordinating repo-native,
+Reusable Codex skills and deterministic scripts for coordinating local,
 multi-agent work with Agent Hub v3.
 
 Agent Hub v3 is a lightweight project operating system for agentic software
-work. A target repository owns a `.hub/` directory, and that directory is the
-durable source of truth for the project: issues, changes, decisions, evidence,
-reports, reviews, and archived history all live there. Chat transcripts,
-subagent memories, and other external notes can be helpful context, but they are
-not authoritative for repo work.
+work. Canonical project state lives in a central user store under
+`~/.agents-hub/` by default, or under `AGENT_HUB_HOME` when that environment
+variable is set. Linked worktrees from the same clone share one central hub,
+so claims, issues, changes, evidence, reports, reviews, and archived history do
+not fragment across worktrees. Chat transcripts, subagent memories, legacy
+repo-local `.hub/` directories, and other external notes can be helpful context,
+but they are not authoritative for repo work after migration.
 
 ## Core Model
 
 Agent Hub v3 separates deterministic state changes from agent judgment.
 
-- `.hub/` stores durable project state in the repository where work happens.
-- Deterministic CLI commands and scripts own `.hub` structure and mutation:
+- `~/.agents-hub/projects/<project-id>/hub/` stores durable project state for
+  the selected repository clone.
+- Deterministic CLI commands and scripts own hub structure and mutation:
   frontmatter, links, dependencies, statuses, claims, evidence appends, reports,
   and archive moves.
 - Skills are thin routing and policy layers. They decide which command or
@@ -32,14 +35,35 @@ Agent Hub v3 separates deterministic state changes from agent judgment.
   criteria, regression coverage or exception, final verification, and PR or
   commit metadata when repo files changed.
 
-Treat external notes as stale until the local `.hub` record agrees with them.
+Treat external notes and legacy repo-local `.hub` files as stale until the
+central hub record agrees with them.
 
-## `.hub/` Layout
+## Central Hub Layout
 
-A v3 hub is initialized inside the target repository:
+A v3 hub is initialized in the central user store:
 
 ```text
-.hub/
+~/.agents-hub/
+`-- projects/
+    `-- <project-id>/
+        |-- project.json
+        `-- hub/
+            |-- config.yml
+            |-- state.yml
+            |-- .gitignore
+            |-- project/
+            |-- changes/
+            |-- issues/
+            |-- decisions/
+            |-- reports/
+            |-- artifacts/
+            `-- runtime/
+```
+
+Inside each `hub/`, the layout is:
+
+```text
+hub/
 |-- config.yml
 |-- state.yml
 |-- .gitignore
@@ -72,7 +96,8 @@ A v3 hub is initialized inside the target repository:
 `-- runtime/
 ```
 
-`.hub/runtime/` stores live claim locks and must remain local:
+`runtime/` stores live claim locks and viewer server metadata and must remain
+local:
 
 ```gitignore
 runtime/
@@ -91,6 +116,7 @@ The v3 command surface owns durable writes:
 
 ```bash
 agent-hub init
+agent-hub migrate
 agent-hub state refresh
 agent-hub change create
 agent-hub change link-issue
@@ -112,7 +138,7 @@ agent-hub scenario eval <scenario-path>
 ```
 
 Older leaf scripts remain compatibility wrappers for operations they already
-support. If no deterministic command exists for a requested `.hub` mutation,
+support. If no deterministic command exists for a requested hub mutation,
 stop and add the missing backend surface instead of hand-editing frontmatter,
 claims, dependencies, status, reports, archives, or layout.
 
@@ -129,7 +155,7 @@ Primary resolver:
 
 Setup:
 
-- `init-agent-hub`: initializes a repo-native `.hub/` layout.
+- `init-agent-hub`: initializes a central Agent Hub for the selected repo clone.
 
 Issue and change lifecycle:
 
@@ -155,6 +181,9 @@ Execution:
 - `run-agent-hub-loop`: runs a budget-capped packet operator loop that repeats
   implementation and independent review waves until blocked, complete, or budget
   exhausted.
+- `verify-agent-hub-pr-preview`: browser-checks PR preview deployments, records
+  preview evidence or a no-preview rationale, and leaves review decisions to the
+  normal review gate.
 
 Review and audit:
 
@@ -196,7 +225,7 @@ The practical flow:
 5. Record activity and evidence with deterministic append commands.
 6. Submit for review only after done criteria, verification, regression
    evidence or exception, commit SHA, pushed branch, and PR URL are recorded.
-7. Review from durable `.hub` records, PRs, commits, artifacts, and command
+7. Review from durable central hub records, PRs, commits, artifacts, and command
    output. Completion is a review decision, not a manual status edit.
 
 ## Practical Examples
@@ -206,6 +235,12 @@ Initialize a hub in a target repo:
 ```bash
 agent-hub --repo /path/to/repo init --project-name "Example Project"
 agent-hub --repo /path/to/repo state refresh
+```
+
+Import an existing legacy repo-local `.hub/` into the central store:
+
+```bash
+agent-hub --repo /path/to/repo migrate
 ```
 
 Equivalent development command:
@@ -275,8 +310,8 @@ agent-hub --repo /path/to/repo audit issue hub-123
 agent-hub --repo /path/to/repo analyze change checkout-retry
 ```
 
-Reports are written to `.hub/reports/` as JSON for stable diagnostics and
-Markdown for humans.
+Reports are written to the central hub's `reports/` directory as JSON for
+stable diagnostics and Markdown for humans.
 
 Export a read-only Kanban/dashboard snapshot without refreshing state or writing
 reports:
@@ -300,7 +335,7 @@ python3 -m http.server 8765 --directory skills/list-agent-hub-issues/viewer
 ```
 
 Then open `http://localhost:8765`. The viewer is read-only and consumes the
-JSON snapshot; it never parses or mutates `.hub` files in the browser.
+JSON snapshot; it never parses or mutates hub files in the browser.
 For implementation details, see
 [`docs/hub-viewer-implementation.md`](docs/hub-viewer-implementation.md).
 
@@ -322,6 +357,7 @@ python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-githu
   skills/claim-agent-hub-issue \
   skills/iterate-agent-hub-work \
   skills/run-agent-hub-loop \
+  skills/verify-agent-hub-pr-preview \
   skills/update-agent-hub-issue \
   skills/review-agent-hub-issue \
   skills/review-agent-hub-workspace \

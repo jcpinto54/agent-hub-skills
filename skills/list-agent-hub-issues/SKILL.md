@@ -1,16 +1,16 @@
 ---
 name: list-agent-hub-issues
-description: Read-only Agent Hub listing and readiness automation for repo-native `.hub` issues. Use when a user asks to list, enumerate, show, count, filter, summarize, export, or find ready-to-start Agent Hub issues, including dependency-aware readiness, board views, Markdown tables, or JSON output.
+description: Read-only Agent Hub listing and readiness automation for central Agent Hub issues. Use when a user asks to list, enumerate, show, count, filter, summarize, export, or find ready-to-start Agent Hub issues, including dependency-aware readiness, board views, Markdown tables, or JSON output.
 ---
 
 # List Agent Hub Issues
 
-Use the bundled script for read-only listing of repo-native `.hub` issues.
+Use the bundled script for read-only listing of central Agent Hub issues.
 
 ## Workflow
 
 1. Ensure Agent Hub setup exists. If not, use `init-agent-hub`.
-2. Run the list script. It reads `.hub/issues/*.md`.
+2. Run the list script from the target repo/worktree. It reads the central hub selected for that clone.
 3. Run:
 
 ```bash
@@ -25,12 +25,12 @@ python3 <skill-dir>/scripts/agent_hub_list.py --readiness Ready
 python3 <skill-dir>/scripts/agent_hub_list.py --backend file --change '<change-slug>'
 python3 <skill-dir>/scripts/agent_hub_list.py --status 'In Review'
 python3 <skill-dir>/scripts/agent_hub_list.py --format json
-python3 <skill-dir>/scripts/agent_hub_list.py --hub-root '<repo>/.hub'
+python3 <skill-dir>/scripts/agent_hub_list.py --hub-root '<legacy-or-test-hub>'
 ```
 
 ## Read-Only Viewer
 
-For repo-native hubs, use the main v3 CLI to export a static dashboard snapshot,
+For central hubs, use the main v3 CLI to export a static dashboard snapshot,
 then serve this skill's viewer directory:
 
 ```bash
@@ -45,7 +45,7 @@ python3 -m http.server 8765 --directory '<repo>/skills/list-agent-hub-issues/vie
 
 Open `http://localhost:8765`. The viewer is read-only: it consumes
 `hub-state.json` or the bundled sample state, and it does not parse or mutate
-`.hub` files in the browser.
+hub files in the browser.
 
 ## What The Script Computes
 
@@ -59,7 +59,7 @@ Open `http://localhost:8765`. The viewer is read-only: it consumes
 - Computes `Not Started` readiness from owner, blockers, active claim, and dependency statuses.
 - Computes `In Review` readiness from owner and active claim.
 - Flags expired and active claims through `Claim ID` and `Claim Expires At`.
-- Renders local issue file paths as links, supports `--change <slug>` packet filtering, and uses issue frontmatter plus `.hub/runtime/claims.json` claim state.
+- Renders issue paths as links, supports `--change <slug>` packet filtering, and uses issue frontmatter plus central `runtime/claims.json` claim state.
 
 ## Safety
 

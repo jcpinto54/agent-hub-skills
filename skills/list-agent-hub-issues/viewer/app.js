@@ -186,7 +186,7 @@
     const change = payload?.change || "all changes";
     const issueCount = payload?.summary?.issue_count ?? allIssues(payload).length;
     elements.projectMeta.textContent = `${project} / ${change} / ${issueCount} issues`;
-    elements.sourceLabel.textContent = `Source: ${payload?.mode || "read-only"} .hub`;
+    elements.sourceLabel.textContent = `Source: ${payload?.mode || "read-only"} hub`;
     elements.generatedLabel.textContent = `Generated: ${payload?.generated_at || "snapshot"}`;
   }
 

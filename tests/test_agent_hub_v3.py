@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,12 +57,60 @@ CHANGE_TEMPLATES = {
 
 
 class AgentHubV3Tests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.agent_hub_home_temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.agent_hub_home_temp.cleanup)
+        self.agent_hub_home = Path(self.agent_hub_home_temp.name).resolve()
+
     def make_repo(self) -> Path:
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         root = Path(temp.name)
         (root / ".git").mkdir()
         return root
+
+    def make_git_repo(self, name: str = "repo") -> Path:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name) / name
+        root.mkdir()
+        self.git(root, "init")
+        (root / "README.md").write_text(f"# {name}\n", encoding="utf-8")
+        self.git(root, "add", "README.md")
+        self.git(
+            root,
+            "-c",
+            "user.name=Agent Hub",
+            "-c",
+            "user.email=agent@example.invalid",
+            "commit",
+            "-m",
+            "init",
+        )
+        return root
+
+    def remove_worktree(self, root: Path, linked: Path) -> None:
+        subprocess.run(
+            ["git", "-C", str(root), "worktree", "remove", "--force", str(linked)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def git(self, cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"git {' '.join(args)} failed in {cwd}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+        return result
 
     def read_frontmatter(self, path: Path) -> tuple[dict[str, object], str]:
         return file_hub.parse_frontmatter(path.read_text(encoding="utf-8"))
@@ -101,21 +152,32 @@ class AgentHubV3Tests(unittest.TestCase):
             self.assertIsInstance(diagnostic.get("message"), str)
             self.assertIsInstance(diagnostic.get("recommendation"), str)
 
-    def run_cli(self, repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    def run_cli(
+        self, repo: Path, *args: str, hub_root: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         self.assertTrue(
             CLI_PATH.exists(),
             "skills/manage-agent-hub-issues/scripts/agent_hub.py must provide the v3 CLI.",
         )
+        command = [sys.executable, str(CLI_PATH), "--repo", str(repo)]
+        if hub_root is not None:
+            command.extend(["--hub-root", str(hub_root)])
+        command.extend(args)
+        env = os.environ.copy()
+        env["AGENT_HUB_HOME"] = str(self.agent_hub_home)
         return subprocess.run(
-            [sys.executable, str(CLI_PATH), "--repo", str(repo), *args],
+            command,
             cwd=repo,
+            env=env,
             text=True,
             capture_output=True,
             check=False,
         )
 
-    def assert_cli_ok(self, repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-        result = self.run_cli(repo, *args)
+    def assert_cli_ok(
+        self, repo: Path, *args: str, hub_root: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        result = self.run_cli(repo, *args, hub_root=hub_root)
         self.assertEqual(
             result.returncode,
             0,
@@ -123,8 +185,10 @@ class AgentHubV3Tests(unittest.TestCase):
         )
         return result
 
-    def assert_cli_fails(self, repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-        result = self.run_cli(repo, *args)
+    def assert_cli_fails(
+        self, repo: Path, *args: str, hub_root: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        result = self.run_cli(repo, *args, hub_root=hub_root)
         self.assertNotEqual(
             result.returncode,
             0,
@@ -195,6 +259,185 @@ None.
 
 None.
 """
+
+    def test_central_hub_resolution_shares_linked_worktrees_but_not_separate_clones(self):
+        root = self.make_git_repo("central-resolution")
+        linked = root.parent / "central-resolution-linked"
+        self.git(root, "worktree", "add", str(linked))
+        self.addCleanup(self.remove_worktree, root, linked)
+        separate = root.parent / "central-resolution-copy"
+        shutil.copytree(root, separate, ignore=shutil.ignore_patterns(".git"))
+        self.git(separate, "init")
+
+        with patch.dict(os.environ, {"AGENT_HUB_HOME": str(self.agent_hub_home)}):
+            root_hub = file_hub.central_hub_path(start=root)
+            linked_hub = file_hub.central_hub_path(start=linked)
+            separate_hub = file_hub.central_hub_path(start=separate)
+
+        self.assertEqual(root_hub, linked_hub)
+        self.assertNotEqual(root_hub, separate_hub)
+        self.assertTrue(str(root_hub).startswith(str(self.agent_hub_home / "projects")))
+        self.assertEqual(root_hub.name, "hub")
+
+    def test_cli_init_uses_central_store_and_linked_worktree_runtime_claims_are_shared(self):
+        root = self.make_git_repo("central-cli")
+        linked = root.parent / "central-cli-linked"
+        self.git(root, "worktree", "add", str(linked))
+        self.addCleanup(self.remove_worktree, root, linked)
+
+        init_result = self.assert_cli_ok(root, "init", "--project-name", "Central CLI")
+        init_payload = json.loads(init_result.stdout)
+        central_hub = Path(init_payload["hub"])
+
+        self.assertTrue(central_hub.exists())
+        self.assertTrue(str(central_hub).startswith(str(self.agent_hub_home)))
+        self.assertFalse((root / ".hub/config.yml").exists())
+
+        self.assert_cli_ok(
+            root, "issue", "create", "--id", "shared-claim", "--title", "Shared Claim"
+        )
+        self.assert_cli_ok(
+            linked,
+            "claim",
+            "acquire",
+            "--issue",
+            "shared-claim",
+            "--owner",
+            "Codex",
+            "--claim-id",
+            "shared-work",
+        )
+        claims_path = central_hub / "runtime/claims.json"
+        claims = json.loads(claims_path.read_text(encoding="utf-8"))
+        self.assertEqual(claims["shared-claim"]["id"], "shared-work")
+
+        check_result = self.assert_cli_ok(
+            root, "claim", "check", "--issue", "shared-claim", "--claim-id", "shared-work"
+        )
+        check_payload = json.loads(check_result.stdout)
+        self.assertEqual(check_payload["claim_id"], "shared-work")
+
+        metadata = json.loads((central_hub.parent / "project.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            set(metadata["worktrees"]),
+            {str(root.resolve()), str(linked.resolve())},
+        )
+
+    def test_cli_migrate_imports_legacy_hub_without_mutating_repo_hub(self):
+        root = self.make_repo()
+        legacy_hub = file_hub.create_hub(root, "Legacy Project")
+        file_hub.create_issue_file(legacy_hub, "Legacy Issue", "legacy-issue")
+        file_hub.claim_issue(
+            legacy_hub,
+            file_hub.issue_by_id(legacy_hub, "legacy-issue"),
+            "work",
+            "Codex",
+            120,
+            "legacy-work",
+        )
+        before = {
+            path.relative_to(legacy_hub).as_posix(): path.read_bytes()
+            for path in sorted(legacy_hub.rglob("*"))
+            if path.is_file()
+        }
+
+        result = self.assert_cli_ok(root, "migrate")
+        payload = json.loads(result.stdout)
+        central_hub = Path(payload["hub"])
+
+        self.assertTrue((central_hub / "issues/legacy-issue.md").exists())
+        claims = json.loads((central_hub / "runtime/claims.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            claims["legacy-issue"]["id"],
+            "legacy-work",
+        )
+        after = {
+            path.relative_to(legacy_hub).as_posix(): path.read_bytes()
+            for path in sorted(legacy_hub.rglob("*"))
+            if path.is_file()
+        }
+        self.assertEqual(before, after)
+
+        migrated_issue = self.assert_cli_ok(root, "dashboard", "export")
+        dashboard = json.loads(migrated_issue.stdout)
+        self.assertEqual(dashboard["summary"]["issue_count"], 1)
+
+        (legacy_hub / "issues/repo-local-only.md").write_text(
+            """---
+id: repo-local-only
+title: "Repo Local Only"
+status: Not Started
+type: Feature
+priority: P2
+owner: Unassigned
+change: ""
+depends_on: []
+blocks: []
+claim: {}
+base_branch: ""
+branch: ""
+worktree_path: ""
+commit_sha: ""
+pr_url: ""
+related_links: ""
+---
+
+## Context
+""",
+            encoding="utf-8",
+        )
+        ignored_legacy = self.assert_cli_ok(root, "dashboard", "export")
+        ignored_dashboard = json.loads(ignored_legacy.stdout)
+        self.assertEqual(ignored_dashboard["summary"]["issue_count"], 1)
+
+    def test_cli_init_refuses_legacy_repo_hub_before_migration(self):
+        root = self.make_repo()
+        legacy_hub = file_hub.create_hub(root, "Legacy Project")
+
+        result = self.assert_cli_fails(root, "init", "--project-name", "Wrong Empty Hub")
+
+        self.assertIn("migrate", result.stderr)
+        self.assertFalse(file_hub.central_hub_path(root).exists())
+        self.assertTrue((legacy_hub / "config.yml").exists())
+
+    def test_cli_migrate_rejects_explicit_hub_root_override(self):
+        root = self.make_repo()
+        legacy_hub = file_hub.create_hub(root, "Legacy Project")
+
+        result = self.assert_cli_fails(root, "migrate", hub_root=legacy_hub)
+
+        self.assertIn("--hub-root", result.stderr)
+        self.assertFalse(file_hub.central_hub_path(root).exists())
+
+    def test_hub_root_escape_hatch_uses_explicit_hub_path(self):
+        root = self.make_repo()
+        central_init = self.assert_cli_ok(root, "init", "--project-name", "Central Project")
+        central_hub = Path(json.loads(central_init.stdout)["hub"])
+        explicit_parent = root / "explicit"
+        explicit_hub = file_hub.create_hub(explicit_parent, "Explicit Project")
+        file_hub.create_issue_file(explicit_hub, "Explicit Issue", "explicit-issue")
+
+        central_dashboard = json.loads(self.assert_cli_ok(root, "dashboard", "export").stdout)
+        explicit_dashboard = json.loads(
+            self.assert_cli_ok(root, "dashboard", "export", hub_root=explicit_hub).stdout
+        )
+
+        self.assertEqual(central_dashboard["hub"]["project"], "Central Project")
+        self.assertEqual(central_hub, file_hub.resolve_hub_path(hub_root=central_hub))
+        self.assertEqual(explicit_dashboard["hub"]["project"], "Explicit Project")
+        self.assertEqual(explicit_dashboard["summary"]["issue_count"], 1)
+
+    def test_dashboard_revision_distinguishes_separate_hubs_with_same_contents(self):
+        root = self.make_repo()
+        first = file_hub.create_hub(root / "first", "Same Project")
+        second = file_hub.create_hub(root / "second", "Same Project")
+        file_hub.create_issue_file(first, "Same Issue", "same-issue")
+        file_hub.create_issue_file(second, "Same Issue", "same-issue")
+
+        first_revision = file_hub.dashboard_live_snapshot(first)["revision"]["id"]
+        second_revision = file_hub.dashboard_live_snapshot(second)["revision"]["id"]
+
+        self.assertNotEqual(first_revision, second_revision)
 
     def test_v3_hub_layout_initialization_creates_required_files_and_templates(self):
         root = self.make_repo()
@@ -435,6 +678,7 @@ Outside the hub.
             "../escaped-issue",
             "--title",
             "Escaped Issue",
+            hub_root=hub,
         )
         self.assertIn("issue", created.stderr.lower())
         self.assertFalse((hub / "escaped-issue.md").exists())
@@ -449,6 +693,7 @@ Outside the hub.
             "Escape",
             "--line",
             "Summary: should not write outside .hub/issues",
+            hub_root=hub,
         )
         self.assertIn("issue", appended.stderr.lower())
         self.assertEqual(outside_issue.read_text(encoding="utf-8"), outside_text)
@@ -463,6 +708,7 @@ Outside the hub.
             "Escape",
             "--line",
             "Command: should fail before writing artifacts",
+            hub_root=hub,
         )
         self.assertIn("issue", evidenced.stderr.lower())
         self.assertFalse((hub / "artifacts/safe-issue").exists())
@@ -481,6 +727,7 @@ Outside the hub.
             "Orphaned Work",
             "--change",
             "missing-change",
+            hub_root=hub,
         )
 
         self.assertIn("missing-change", result.stderr)
@@ -662,7 +909,7 @@ Malformed frontmatter should be reported deterministically.
             encoding="utf-8",
         )
 
-        result = self.assert_cli_ok(root, "audit", "issue", "malformed")
+        result = self.assert_cli_ok(root, "audit", "issue", "malformed", hub_root=hub)
         payload = json.loads(result.stdout)
 
         self.assert_stable_diagnostics(payload)
@@ -751,8 +998,10 @@ Malformed frontmatter should be reported deterministically.
         dashboard_payload = json.loads(dashboard_path.read_text(encoding="utf-8"))
         self.assertEqual(dashboard_payload["mode"], "read-only")
         self.assertEqual(dashboard_payload["change"], "cli-change")
+        self.assertEqual(dashboard_payload["revision"]["change"], "cli-change")
         stdout_dashboard = self.assert_cli_ok(root, "dashboard", "export", "--change", "cli-change")
         stdout_payload = json.loads(stdout_dashboard.stdout)
+        self.assertEqual(stdout_payload["revision"]["change"], "cli-change")
         self.assertEqual(stdout_payload["columns"][1]["title"], "Ready")
         self.assert_cli_ok(root, "change", "link-issue", "--change", "cli-change", "--issue", "cli-issue")
         self.assert_cli_ok(root, "change", "unlink-issue", "--change", "cli-change", "--issue", "cli-issue")

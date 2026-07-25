@@ -30,11 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     backend_kwargs = {
         "choices": ["auto", "file"],
-        "help": "Use repo .hub files.",
+        "help": "Use central file-backed Agent Hub state.",
     }
     parser.add_argument("--backend", default="auto", **backend_kwargs)
     parser.add_argument(
-        "--hub-root", type=Path, help="Path to a repo-native .hub directory."
+        "--hub-root", type=Path, help="Explicit hub directory override."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

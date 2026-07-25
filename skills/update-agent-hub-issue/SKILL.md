@@ -1,11 +1,11 @@
 ---
 name: update-agent-hub-issue
-description: Update Agent Hub issue progress, blockers, handoffs, repo metadata, work claim releases, and In Progress to In Review submissions in repo-native `.hub` issues. Use when a user asks to report progress, pause, block, hand off, release, submit for review, attach a PR, or move an Agent Hub issue after work has started.
+description: Update Agent Hub issue progress, blockers, handoffs, repo metadata, work claim releases, and In Progress to In Review submissions in central Agent Hub issues. Use when a user asks to report progress, pause, block, hand off, release, submit for review, attach a PR, or move an Agent Hub issue after work has started.
 ---
 
 # Update Agent Hub Issue
 
-For repo-native hubs, append durable entries to `.hub/issues/<issue-id>.md`. Use `claim-agent-hub-issue`'s script for claim checks, renewals, and releases.
+For central hubs, append durable entries to `issues/<issue-id>.md`. Use `claim-agent-hub-issue`'s script for claim checks, renewals, and releases.
 
 ## Required Claim Check
 
@@ -28,7 +28,7 @@ Append a durable activity-log entry. Include:
 - Risks, skipped checks, or unknowns
 - Exact next step
 
-For repo-native hubs, use the append script when a structured progress entry is enough:
+For central hubs, use the append script when a structured progress entry is enough:
 
 ```bash
 python3 <skill-dir>/scripts/append_file_activity.py \

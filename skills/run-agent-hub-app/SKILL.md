@@ -1,6 +1,6 @@
 ---
 name: run-agent-hub-app
-description: Start or refresh the local read-only Agent Hub viewer app for repo-native `.hub` projects. Use when a user asks to run, open, launch, serve, refresh, or get a link to the Agent Hub app, dashboard, Kanban viewer, or hub UI for a repository or change packet.
+description: Start or refresh the local read-only Agent Hub viewer app for central Agent Hub projects. Use when a user asks to run, open, launch, serve, refresh, or get a link to the Agent Hub app, dashboard, Kanban viewer, or hub UI for a repository or change packet.
 ---
 
 # Run Agent Hub App
@@ -35,6 +35,7 @@ python3 <skill-dir>/scripts/run_agent_hub_app.py --repo '<target-repo>' --change
   user explicitly asks for that.
 - Use `--foreground` only when the user wants to keep the server attached to the
   current terminal.
+- Use `--hub-root <path>` only for explicit legacy or test hub overrides.
 
 ## Behavior
 
@@ -42,12 +43,12 @@ python3 <skill-dir>/scripts/run_agent_hub_app.py --repo '<target-repo>' --change
 - Serves the existing static viewer directory at `http://<host>:<port>`.
 - Reuses a live viewer server on the selected port instead of starting a
   duplicate.
-- Writes server logs and PID metadata under the target repo's `.hub/runtime/`,
-  which is local runtime state.
+- Writes server logs and PID metadata under the central hub's `runtime/`,
+  which is local runtime state shared by linked worktrees.
 
 ## Safety
 
-- Treat the viewer as read-only. It should not mutate `.hub` files.
+- Treat the viewer as read-only. It should not mutate hub files.
 - Do not use this skill for issue claiming, status changes, or agent loops.
 - If dashboard export fails, report the error and do not serve stale state as if
   it were fresh.

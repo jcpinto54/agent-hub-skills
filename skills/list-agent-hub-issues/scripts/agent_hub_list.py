@@ -186,11 +186,11 @@ def json_rows(rows: list[tuple[Any, str, str]], by_id: dict[str, Any], limit: in
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", choices=["auto", "file"], default="auto")
-    parser.add_argument("--hub-root", type=Path, help="Path to a repo-native .hub directory.")
+    parser.add_argument("--hub-root", type=Path, help="Explicit hub directory override.")
     parser.add_argument("--status", choices=STATUS_ORDER)
     parser.add_argument("--owner")
     parser.add_argument("--priority", choices=["P0", "P1", "P2", "P3"])
-    parser.add_argument("--change", help="Repo-native change packet slug to filter by.")
+    parser.add_argument("--change", help="Change packet slug to filter by.")
     parser.add_argument("--type")
     parser.add_argument("--area")
     parser.add_argument("--readiness", choices=["Ready", "Blocked", "Unknown"])

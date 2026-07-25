@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Append an activity or review entry to a repo-native .hub issue."""
+"""Append an activity or review entry to a central Agent Hub issue."""
 
 from __future__ import annotations
 

@@ -2,13 +2,13 @@
 
 ## Source Of Truth
 
-- Use `.hub/` in the target repository as the only durable source of truth for repo work.
-- Use `.hub/` before trusting any external notes or mirrors.
-- Keep `.hub/runtime/` gitignored. Runtime claims are local live state, not durable project history.
+- Use the central Agent Hub store under `~/.agents-hub/` or `AGENT_HUB_HOME` as the only durable source of truth for repo work.
+- Use the central hub before trusting external notes, mirrors, or legacy repo-local `.hub/` directories.
+- Keep `runtime/` in the central hub local. Runtime claims are live state, not durable project history.
 
 ## Deterministic Write Policy
 
-Agents do not own `.hub` structure. Deterministic commands own:
+Agents do not own hub structure. Deterministic commands own:
 
 - layout initialization
 - frontmatter parsing and writing
@@ -87,8 +87,8 @@ Implementation work must define verification before coding.
 - UI/user-facing workflows should include browser automation smoke checks when
   feasible.
 - For PR-backed web work, if CI creates a preview deployment, the orchestrator
-  should delegate preview website verification to a separate subagent before
-  normal review.
+  should delegate `$verify-agent-hub-pr-preview` to a separate subagent before
+  normal review. If no preview URL is available, record a no-preview rationale.
 - Review fails when regression evidence, done-criteria coverage, final
   verification, or repo evidence is missing.
 
@@ -111,7 +111,8 @@ Do not submit repo work to review unless:
 - `Commit SHA` and `PR URL` are recorded
 - tests/evals/checks or skipped-check rationale are recorded
 - preview verification evidence is recorded when a CI-created PR preview exists
-  for user-facing web work
+  for user-facing web work, or a no-preview rationale is recorded when no
+  preview URL can be found
 
 Completion is a review decision. Use a deterministic release/status command or
 the review skill; do not manually clear claims or set `Completed`.
