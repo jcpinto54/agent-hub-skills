@@ -71,8 +71,8 @@ Repeat until a stop condition is reached:
 3. List ready implementation issues for the packet.
 4. Spawn one implementation subagent per row, capped by remaining budget.
 5. Wait for the implementation wave to finish.
-6. Run `audit hub`, `state refresh`, and `analyze change <slug>`. Stop on
-   blocking errors.
+6. Run `audit hub`, `state refresh`, and `analyze change <slug>`.
+   Stop on blocking errors.
 7. For each PR-backed issue that has entered review, inspect recorded PR,
    deployment, CI, or related-link evidence for a preview URL. When a CI-created
    preview URL is available for a PR, spawn a preview-verification subagent

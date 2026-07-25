@@ -215,7 +215,12 @@ def run_fixture_eval(
         }
 
     with isolated_fixture_dir(fixture_dir) as run_dir:
-        command = [*cli["command"], *evaluation["command"]]
+        command = [
+            *cli["command"],
+            "--hub-root",
+            str(run_dir / ".hub"),
+            *evaluation["command"],
+        ]
         completed = subprocess.run(
             command,
             cwd=run_dir,

@@ -69,9 +69,9 @@ def _route_requirements(expected: dict[str, Any]) -> list[str]:
     route = expected.get("route")
     command = expected.get("command")
     requirements = [
-        ".hub/",
+        "central agent hub store",
         "only durable source of truth",
-        "deterministic commands own `.hub` mutations",
+        "deterministic commands own hub mutations",
         "do not hand-edit",
     ]
     if command:
