@@ -75,6 +75,9 @@ class AgentHubSyncSkillsTests(unittest.TestCase):
     def test_expected_skills_include_packet_loop_operator(self):
         self.assertIn("run-agent-hub-loop", sync_mod.EXPECTED_SKILLS)
 
+    def test_expected_skills_include_pr_preview_verification(self):
+        self.assertIn("verify-agent-hub-pr-preview", sync_mod.EXPECTED_SKILLS)
+
     def test_expected_skills_include_spec_gate(self):
         self.assertIn("spec-agent-hub-issue", sync_mod.EXPECTED_SKILLS)
 
