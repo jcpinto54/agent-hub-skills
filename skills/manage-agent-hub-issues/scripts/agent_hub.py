@@ -345,7 +345,12 @@ def serve_dashboard(
         def do_HEAD(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API.
             parsed = urlparse(self.path)
             if parsed.path == "/healthz":
-                self.send_headers(HTTPStatus.OK, "text/plain; charset=utf-8", 0, no_store=True)
+                self.send_headers(
+                    HTTPStatus.OK,
+                    "text/plain; charset=utf-8",
+                    len(b"ok\n"),
+                    no_store=True,
+                )
                 return
             if parsed.path in {"/api/state", "/hub-state.json"}:
                 snapshot = cache.get(hub, change=change)

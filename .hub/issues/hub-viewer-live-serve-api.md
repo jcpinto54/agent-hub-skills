@@ -149,3 +149,12 @@ Claim ID: review-39e91b48-d24e-4b77-a121-c60f49c7b36b
 Mode: review-fail
 Status: In Progress
 Owner: Unassigned
+
+### Rebased review fixes
+Date: 2026-07-25
+Agent: Codex-Review
+Base: 8701d8b73cf03dfeccc5092a203d3f29d5f54508
+Summary: Rebased PR #3 onto merged main while preserving main's central hub resolution, live `/api/state` and `/hub-state.json` routing, viewer live-update behavior, SSE keepalives, and merged-PR concurrency safeguards. Dropped the superseded server implementation from the original PR and retained its adapted end-to-end server regression.
+Review resolution: Main already resolved the stale/sample viewer state and disconnected SSE handler findings. Expanded regression coverage verifies mutation rejection for `/`, `/healthz`, `/api/state`, `/hub-state.json`, and `/api/events`, including `Allow` and `Cache-Control` headers, and verifies named `event: revision` SSE messages. Fixed HEAD `/healthz` to report the GET representation's three-byte Content-Length while returning no body.
+Red evidence: `python3 -m unittest tests.test_agent_hub_v3.AgentHubV3Tests.test_dashboard_serve_exposes_read_only_state_api` failed with `AssertionError: '0' != '3'` before the HEAD metadata fix.
+Green evidence: focused server test passed; `python3 -m unittest tests.test_agent_hub_v3 tests.test_hub_viewer_static tests.test_run_agent_hub_app tests.test_file_hub_backend` passed 51 tests; `python3 -m unittest discover -s tests` passed 81 tests; `python3 evals/run_evals.py` passed 22 of 22 evals; `git diff --check` passed.
