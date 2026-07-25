@@ -1162,6 +1162,12 @@ Malformed frontmatter should be reported deterministically.
         else:
             self.fail("dashboard serve did not become healthy")
 
+        health_head = urllib.request.Request(f"{base_url}/healthz", method="HEAD")
+        with urllib.request.urlopen(health_head, timeout=2) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers.get("Content-Length"), str(len(b"ok\n")))
+            self.assertEqual(response.read(), b"")
+
         with urllib.request.urlopen(f"{base_url}/", timeout=2) as response:
             self.assertEqual(response.status, 200)
             self.assertIn("text/html", response.headers.get("Content-Type", ""))
@@ -1177,11 +1183,21 @@ Malformed frontmatter should be reported deterministically.
         self.assertEqual(state["summary"]["issue_count"], 1)
         first_revision = state["revision"]["id"]
 
-        for method in ["POST", "PUT", "PATCH", "DELETE"]:
-            request = urllib.request.Request(f"{base_url}/api/state", method=method)
-            with self.assertRaises(urllib.error.HTTPError) as raised:
-                urllib.request.urlopen(request, timeout=2)
-            self.assertEqual(raised.exception.code, 405)
+        with urllib.request.urlopen(f"{base_url}/hub-state.json", timeout=2) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+            viewer_state = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(viewer_state["revision"]["id"], first_revision)
+
+        mutation_paths = ["/", "/healthz", "/api/state", "/hub-state.json", "/api/events"]
+        for path in mutation_paths:
+            for method in ["POST", "PUT", "PATCH", "DELETE"]:
+                request = urllib.request.Request(f"{base_url}{path}", method=method)
+                with self.assertRaises(urllib.error.HTTPError) as raised:
+                    urllib.request.urlopen(request, timeout=2)
+                self.assertEqual(raised.exception.code, 405)
+                self.assertEqual(raised.exception.headers.get("Allow"), "GET, HEAD")
+                self.assertEqual(raised.exception.headers.get("Cache-Control"), "no-store")
 
         events_request = urllib.request.Request(
             f"{base_url}/api/events",
@@ -1192,31 +1208,33 @@ Malformed frontmatter should be reported deterministically.
             self.assertEqual(events.headers.get("Cache-Control"), "no-store")
             self.assertIn("text/event-stream", events.headers.get("Content-Type", ""))
 
-            def read_event_data() -> dict[str, object]:
+            def read_revision_event() -> tuple[str, dict[str, object]]:
                 deadline = time.monotonic() + 3
-                lines: list[str] = []
+                event_name = ""
+                data_lines: list[str] = []
                 while time.monotonic() < deadline:
-                    line = events.readline().decode("utf-8").rstrip("\n")
+                    line = events.readline().decode("utf-8").rstrip("\r\n")
                     if not line:
-                        if lines:
-                            payload = "\n".join(
-                                item.removeprefix("data: ")
-                                for item in lines
-                                if item.startswith("data: ")
-                            )
-                            return json.loads(payload)
+                        if data_lines:
+                            return event_name, json.loads("\n".join(data_lines))
+                        event_name = ""
                         continue
-                    lines.append(line)
+                    if line.startswith("event:"):
+                        event_name = line.removeprefix("event:").strip()
+                    elif line.startswith("data:"):
+                        data_lines.append(line.removeprefix("data:").lstrip())
                 self.fail("timed out waiting for SSE event data")
 
-            initial_event = read_event_data()
+            initial_event_name, initial_event = read_revision_event()
+            self.assertEqual(initial_event_name, "revision")
             self.assertEqual(initial_event["revision"]["id"], first_revision)
 
             updated = file_hub.issue_by_id(hub, "serve-card")
             updated.status = "Completed"
             updated.write()
 
-            changed_event = read_event_data()
+            changed_event_name, changed_event = read_revision_event()
+            self.assertEqual(changed_event_name, "revision")
             self.assertNotEqual(changed_event["revision"]["id"], first_revision)
             self.assertEqual(changed_event["summary"]["issue_count"], 1)
 
