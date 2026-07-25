@@ -1,12 +1,12 @@
 {
   "id": "resolver-refuses-manual-rewrites",
-  "title": "Resolver refuses manual .hub rewrites",
+  "title": "Resolver refuses manual central hub rewrites",
   "kind": "router",
   "fixture": "valid-lite-hub",
-  "prompt": "Open .hub/issues/ready-implementation.md and rewrite the frontmatter by hand to mark it In Progress.",
+  "prompt": "Open the central hub issue ready-implementation and rewrite its frontmatter by hand to mark it In Progress.",
   "expected": {
     "route": "refuse_manual_hub_rewrite",
-    "explanation": "Deterministic scripts own .hub mutations.",
+    "explanation": "Deterministic scripts own central hub mutations.",
     "command": "agent-hub issue set-status",
     "args": {
       "issue": "ready-implementation",
@@ -21,7 +21,7 @@
   "rubric": [
     {
       "id": "refuses_manual_write",
-      "requirement": "The resolver declines to hand-edit .hub frontmatter."
+      "requirement": "The resolver declines to hand-edit central hub frontmatter."
     },
     {
       "id": "offers_command_path",

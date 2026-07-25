@@ -6,7 +6,7 @@
   "prompt": "Run a packet loop for a project whose PR CI creates preview deployments.",
   "expected": {
     "required_phrases": [
-      "when a CI-created preview URL is available for a PR, spawn a preview-verification subagent before independent review",
+      "when a CI-created preview URL is available for a PR, spawn a preview-verification subagent using `$verify-agent-hub-pr-preview` before independent review",
       "preview-verification agents check the deployed preview website against the issue done criteria",
       "normal review should treat preview evidence as durable input"
     ]
