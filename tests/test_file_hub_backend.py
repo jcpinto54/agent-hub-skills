@@ -3,8 +3,10 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
@@ -218,6 +220,58 @@ None.
         self.assertEqual(released["status"], "In Review")
         self.assertEqual(file_hub.load_runtime_claims(hub), {})
 
+    def test_hub_mutation_lock_serializes_threads_and_survives_process_exit(self):
+        temp, _, hub = self.make_repo()
+        self.addCleanup(temp.cleanup)
+        first_acquired = threading.Event()
+        release_first = threading.Event()
+        second_acquired = threading.Event()
+
+        def first_writer() -> None:
+            with file_hub.hub_mutation_lock(hub):
+                first_acquired.set()
+                release_first.wait(timeout=5)
+
+        def second_writer() -> None:
+            first_acquired.wait(timeout=5)
+            with file_hub.hub_mutation_lock(hub):
+                second_acquired.set()
+
+        first = threading.Thread(target=first_writer)
+        second = threading.Thread(target=second_writer)
+        first.start()
+        second.start()
+        self.assertTrue(first_acquired.wait(timeout=5))
+        self.assertFalse(second_acquired.wait(timeout=0.05))
+        release_first.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertTrue(second_acquired.is_set())
+
+        child = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import os, sys; from pathlib import Path; "
+                    f"sys.path.insert(0, {str(COMMON_LIB)!r}); "
+                    "import file_hub_common as file_hub; "
+                    "lock = file_hub.hub_mutation_lock(Path(sys.argv[1])); "
+                    "lock.__enter__(); os._exit(0)"
+                ),
+                str(hub),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        self.assertEqual(child.returncode, 0, child.stderr)
+        with file_hub.hub_mutation_lock(hub):
+            pass
+
     def test_append_activity_is_append_only(self):
         temp, _, hub = self.make_repo()
         self.addCleanup(temp.cleanup)
@@ -298,6 +352,85 @@ None.
         self.assertEqual(seen, ["https://github.com/example/repo/pull/8"])
         self.assertEqual(file_hub.issue_by_id(hub, "target-pr").status, "Completed")
         self.assertEqual(file_hub.issue_by_id(hub, "other-pr").status, "In Review")
+
+    def test_sync_merged_prs_preserves_concurrent_review_sendback(self):
+        temp, _, hub = self.make_repo()
+        self.addCleanup(temp.cleanup)
+        issue = file_hub.create_issue_file(hub, "Review changed", "review-changed")
+        issue.status = "In Review"
+        issue.owner = "Reviewer"
+        issue.claim = {
+            "id": "review-changing",
+            "purpose": "review",
+            "owner": "Reviewer",
+            "expires_at": "2099-01-01T00:00:00Z",
+        }
+        issue.pr_url = "https://github.com/example/repo/pull/10"
+        issue.write()
+        file_hub.write_runtime_claims(hub, {issue.id: issue.claim})
+
+        def provider(pr_url: str) -> dict[str, object]:
+            file_hub.release_issue(
+                hub,
+                file_hub.issue_by_id(hub, issue.id),
+                "review-changing",
+                "review-fail",
+                owner="Implementer",
+            )
+            return {"state": "MERGED", "url": pr_url}
+
+        result = file_hub.sync_merged_prs(hub, provider=provider)
+
+        self.assertEqual(result["completed"], [])
+        self.assertEqual(result["skipped"], [issue.id])
+        self.assertIn(
+            "sync_issue_changed",
+            {item["code"] for item in result["diagnostics"]},
+        )
+        updated = file_hub.issue_by_id(hub, issue.id)
+        self.assertEqual(updated.status, "In Progress")
+        self.assertIn("Released claim (review-fail)", updated.body)
+        self.assertEqual(file_hub.load_runtime_claims(hub), {})
+
+    def test_sync_merged_prs_preserves_claim_created_during_lookup(self):
+        temp, _, hub = self.make_repo()
+        self.addCleanup(temp.cleanup)
+        merged = file_hub.create_issue_file(hub, "Merged", "merged")
+        merged.status = "In Review"
+        merged.claim = {
+            "id": "merged-review",
+            "purpose": "review",
+            "owner": "Reviewer",
+            "expires_at": "2099-01-01T00:00:00Z",
+        }
+        merged.pr_url = "https://github.com/example/repo/pull/11"
+        merged.write()
+        file_hub.write_runtime_claims(hub, {merged.id: merged.claim})
+        concurrent = self.set_agent_ready_body(
+            file_hub.create_issue_file(hub, "Concurrent", "concurrent")
+        )
+
+        def provider(pr_url: str) -> dict[str, object]:
+            file_hub.claim_issue(
+                hub,
+                concurrent,
+                "work",
+                "Worker",
+                120,
+                "concurrent-work",
+            )
+            return {"state": "MERGED", "url": pr_url}
+
+        result = file_hub.sync_merged_prs(hub, provider=provider)
+
+        self.assertEqual(result["completed"], [merged.id])
+        claims = file_hub.load_runtime_claims(hub)
+        self.assertNotIn(merged.id, claims)
+        self.assertEqual(claims[concurrent.id]["id"], "concurrent-work")
+        self.assertEqual(
+            file_hub.issue_by_id(hub, concurrent.id).claim_id,
+            "concurrent-work",
+        )
 
     def test_set_issue_spec_preserves_frontmatter_replaces_sections_and_clears_diagnostics(self):
         temp, root, hub = self.make_repo()

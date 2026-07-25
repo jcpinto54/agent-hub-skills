@@ -24,11 +24,12 @@ class AgentHubPreviewSkillTests(unittest.TestCase):
 
     def test_run_loop_syncs_merged_prs_before_dependency_analysis(self):
         text = read_repo_file("skills/run-agent-hub-loop/SKILL.md")
+        loop = text.split("## Loop", 1)[1]
 
-        self.assertIn("state sync-merged-prs", text)
+        self.assertIn("state sync-merged-prs", loop)
         self.assertLess(
-            text.index("state sync-merged-prs"),
-            text.index("analyze change <slug>"),
+            loop.index("state sync-merged-prs"),
+            loop.index("analyze change <slug>"),
         )
 
     def test_preview_skill_contract_records_browser_evidence_without_review_decision(self):
