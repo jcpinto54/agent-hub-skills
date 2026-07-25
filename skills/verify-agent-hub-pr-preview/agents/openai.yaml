@@ -1,0 +1,4 @@
+interface:
+  display_name: "Verify Agent Hub PR Preview"
+  short_description: "Browser-check PR preview deployments"
+  default_prompt: "Use $verify-agent-hub-pr-preview to verify this Agent Hub PR preview and record evidence."
