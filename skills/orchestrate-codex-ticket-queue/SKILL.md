@@ -25,6 +25,8 @@ the safe inference in the activation summary.
 - maximum simultaneous implementation tasks (default: 2);
 - whether review-remediation is enabled (default: enabled);
 - whether each task must commit and push (default: yes);
+- whether the coordinator may shepherd and merge queue-owned pull requests
+  (default: disabled; require explicit user authorization);
 - any explicitly authorized external actions.
 
 When the graph is unclear, read the issue bodies, labels, comments, native
@@ -73,6 +75,8 @@ heartbeat must:
 7. Stop and report the exact blocker when a task fails, is incomplete, requires
    unavailable access, or awaits user input. An ordinary test failure is work to
    diagnose and remediate, not completion.
+8. When PR shepherding is enabled, follow **PR CI Remediation and Landing** for
+   queue-owned pull requests only.
 
 When all engineering issues are complete, delete the obsolete heartbeat
 automation and report that the queue has finished. Do not leave a stale
@@ -93,8 +97,8 @@ these requirements:
 - commit the completed work and push its branch to `origin` before reporting
   completion;
 - report branch, commit, focused checks, and exact blockers;
-- do not merge, deploy, open a pull request, or approve protected gates unless
-  separately authorized.
+- do not merge, deploy, or approve protected gates; the coordinator owns a PR
+  only when PR shepherding is explicitly enabled.
 
 ## Review-Remediation Handoff
 
@@ -119,6 +123,43 @@ The reviewer may change code, tests, configuration, or documentation when the
 correction is directly supported by the issue and needs no new product decision.
 It must not widen scope, deploy, merge, open a PR, or approve protected gates.
 
+## PR CI Remediation and Landing
+
+Use this section only when the user has explicitly authorized queue-owned PR
+shepherding. The coordinator, rather than an implementation task, owns PR
+creation, readiness, and merging.
+
+1. Create or reuse one PR from the latest approved review-remediation branch to
+   the intended base branch. Do not touch Dependabot, user-created, unrelated,
+   or production-release PRs.
+2. On every heartbeat, inspect the PR head SHA, base, draft state, mergeability,
+   merge state, branch-protection/review requirements, and every required GitHub
+   CI check.
+3. Never merge a draft, stale-head, conflicted, behind, blocked, unknown,
+   pending, or failing PR. A pushed branch or local green test run is not landed
+   work.
+4. When CI fails, inspect GitHub Actions logs and identify the root cause before
+   changing code. If the failure is clearly caused by the issue's changes or a
+   directly required CI compatibility update, launch an independent CI-remediation
+   task from the current PR head. It must not be the original implementer.
+5. The CI-remediation task must read the issue, decisions, PR diff, check logs,
+   and existing evidence; reproduce the failure or add a focused failing check;
+   make the smallest specification-preserving fix; run relevant local checks and
+   safe running-app verification where relevant; then commit and push to the
+   existing PR head branch.
+6. Never make CI pass by skipping, weakening, suppressing, pinning around, or
+   downgrading a required test or security check without issue-supported evidence
+   and a separate user decision. Treat external, policy, clinical,
+   provider-authentication, and production-gate failures as blockers rather than
+   code-fix targets.
+7. After the independent remediation passes, wait for GitHub to report all
+   required checks successful on the latest head. Then mark a queue-owned draft
+   ready for review, re-read its state, and merge only when it remains clean,
+   non-draft, policy-satisfied, and at that expected head SHA. Use the
+   repository's configured/default safe merge method.
+8. Do not manually close a linked issue before the PR merges. Do not deploy or
+   delete branches as part of the landing operation unless separately authorized.
+
 ## Human-Decision Stop
 
 If implementation or review finds a high-impact, non-obvious product or
@@ -139,7 +180,7 @@ delete the automation as stale.
 ## Safety Boundaries
 
 - Use only synthetic loopback or explicitly authorized non-production data.
-- Never deploy, merge, push to a protected branch, open a pull request, or
+- Never deploy, push to a protected branch, open a pull request, merge, or
   mutate production systems unless the user separately authorizes that action.
 - Never self-approve clinical, provider-authentication, deployment, or
   production-smoke gates; require genuine responsible human or system evidence.
